@@ -1,0 +1,7 @@
+{
+  "name": "github-pr-links",
+  "version": "1.0.0",
+  "exports": {
+    "./gui-experimental": "./gui-experimental.cjs"
+  }
+}
