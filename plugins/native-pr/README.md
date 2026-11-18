@@ -20,7 +20,9 @@ resolution. Completed or failed actions invalidate the snapshot. The Conversatio
 count includes issue and inline comments and non-empty review bodies, not empty
 approval events; `?` means unavailable and `+` means a section was capped.
 Findings are read separately from the latest `github-actions[bot]` `review-done`
-comment marker. An outdated marker is labeled when its SHA differs from the
+comment marker. The latest marker's `open` count takes precedence over the legacy
+`findings` field; malformed markers are unavailable, never treated as zero.
+An outdated marker is labeled when its SHA differs from the
 current head; `—` means no marker and `?` means comments were unavailable or
 incomplete. Nonzero findings for the current head block the merge action and
 offer to ask the agent to address them. Old findings do not block the current

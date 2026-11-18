@@ -77,7 +77,7 @@ export default Plugin.define({
       return <div style={{ height: '100%', overflow: 'auto', padding: '22px' }}>
         <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', gap: '16px', 'flex-wrap': 'wrap', 'margin-bottom': '20px' }}>
           <div><strong>Plan progress</strong><div style={{ opacity: 0.7, 'margin-top': '4px' }}>{progress().done} of {progress().total} tasks complete</div></div>
-          <button type="button" disabled={busy() || text() === undefined} onClick={() => void start()} style={{ padding: '10px 28px', cursor: 'pointer', 'font-size': '15px', 'font-weight': 700, 'border-radius': '8px', background: 'var(--button-primary-base, #4b78cf)', color: 'white' }}>{busy() ? 'Starting…' : 'Build'}</button>
+          <ctx.ui.Button type="button" variant="contrast" size="large" disabled={busy() || text() === undefined} busy={busy()} onClick={() => void start()}>{busy() ? 'Starting…' : 'Build'}</ctx.ui.Button>
         </div>
         <Show when={error()}><p role="alert" style={{ color: '#e27777' }}>{error()}</p></Show>
         <Show when={text() !== undefined} fallback={<p>{file()?.error || (file()?.notFound ? 'Plan not found.' : 'Loading plan…')}</p>}>

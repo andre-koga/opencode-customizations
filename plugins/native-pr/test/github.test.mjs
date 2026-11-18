@@ -89,7 +89,7 @@ test('shows the latest bot finding count separately and flags outdated or incomp
   assert.equal(findingsSummary({ ...data, comments: null }).label, '?')
   assert.equal(findingsSummary({ ...data, limited: ['comments'] }).label, '?')
   assert.equal(findingsSummary({ ...data, comments: [{ author: 'github-actions[bot]', body: marker(head, 0) }] }).label, '0')
-  assert.equal(findingsSummary({ ...data, comments: [{ author: 'github-actions[bot]', body: `<!-- review-done sha=${head} findings=-1 -->` }] }).label, '—')
+  assert.equal(findingsSummary({ ...data, comments: [{ author: 'github-actions[bot]', body: `<!-- review-done sha=${head} findings=-1 -->` }] }).label, '?')
 })
 
 test('shares requests, rate limits refreshes, and retries after failure', async () => {
@@ -110,6 +110,36 @@ const ready = () => ({
   pull: { state: 'Open', sha: 'a'.repeat(40), mergeable: true, mergeableState: 'clean' },
   checks: [{ name: 'build', status: 'completed', conclusion: 'success' }],
   statuses: [], reviews: [], comments: [], unresolvedThreads: false, limited: [],
+})
+
+test('latest open marker supersedes old findings without masking independent merge blockers', () => {
+  const d = ready(), old = 'b'.repeat(40)
+  const comments = [
+    { author: 'github-actions[bot]', date: '2026-01-01', body: `<!-- review-done sha=${old} findings=5 -->` },
+    { author: 'github-actions[bot]', date: '2026-01-02', body: `<!-- review-done sha=${d.pull.sha} open=0 -->` },
+  ]
+  const data = { ...d, comments }
+  assert.equal(findingsSummary(data).label, '0')
+  assert.equal(primaryAction(data).kind, 'ready')
+  assert.equal(primaryAction({ ...data, unresolvedThreads: true }).label, 'Ask agent to resolve comments')
+  assert.equal(primaryAction({ ...data, pull: { ...d.pull, mergeableState: 'blocked' } }).kind, 'blocked')
+  assert.equal(primaryAction({ ...data, checks: [{ status: 'completed', conclusion: 'failure' }] }).kind, 'blocked')
+  const both = { ...d, comments: [{ author: 'github-actions[bot]', body: `<!-- review-done findings=5 open=0 sha=${d.pull.sha} -->` }] }
+  assert.equal(findingsSummary(both).label, '0')
+  assert.equal(primaryAction(both).kind, 'ready')
+  assert.equal(primaryAction({ ...d, comments: [{ author: 'github-actions[bot]', body: `<!-- review-done sha=${d.pull.sha} findings=0 open=2 -->` }] }).kind, 'blocked')
+  assert.equal(findingsSummary({ ...data, comments: [...comments, { author: 'github-actions[bot]', date: '2026-01-03', body: `<!-- review-done sha=${d.pull.sha} open=bad -->` }] }).label, '?')
+  assert.equal(primaryAction({ ...data, comments: [...comments, { author: 'github-actions[bot]', date: '2026-01-03', body: `<!-- review-done sha=${d.pull.sha} open=bad -->` }] }).kind, 'unknown')
+})
+
+test('fresh merge check still rejects unresolved threads even with open zero', async () => {
+  const d = ready()
+  let called = false
+  await assert.rejects(applyGithubAction({ url: 'https://github.com/acme/repo/pull/42', action: 'merge', expectedHead: d.pull.sha }, {
+    read: async () => ({ ...d, unresolvedThreads: true, comments: [{ author: 'github-actions[bot]', body: `<!-- review-done sha=${d.pull.sha} open=0 -->` }] }),
+    run: async () => { called = true },
+  }), /no longer ready/)
+  assert.equal(called, false)
 })
 
 test('blocks current bot findings but not zero, outdated, or absent markers', () => {

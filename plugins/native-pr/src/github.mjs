@@ -45,9 +45,19 @@ export function reviewFindings(data) {
   const comments = data.comments.filter((comment) => comment.author === 'github-actions[bot]').toSorted((a, b) => (a.date || '').localeCompare(b.date || ''))
   let latest
   for (const comment of comments) {
-    for (const match of (comment.body || '').matchAll(/<!--\s*review-done\s+sha=([0-9a-f]{40})\s+findings=(0|[1-9][0-9]*)\s*-->/gi)) latest = { sha: match[1], count: match[2] }
+    for (const match of (comment.body || '').matchAll(/<!--\s*review-done\b([\s\S]*?)-->/gi)) {
+      const fields = {}, duplicates = new Set()
+      for (const token of match[1].matchAll(/(?:^|\s)(sha|open|findings)=([^\s]+)/gi)) {
+        const key = token[1].toLowerCase()
+        if (key in fields) duplicates.add(key)
+        fields[key] = token[2]
+      }
+      const count = /(?:^|\s)open=/i.test(match[1]) ? fields.open : fields.findings
+      latest = duplicates.size || !/^[0-9a-f]{40}$/i.test(fields.sha || '') || !/^(0|[1-9][0-9]*)$/.test(count || '') ? { invalid: true } : { sha: fields.sha, count }
+    }
   }
   if (!latest) return { status: 'none' }
+  if (latest.invalid) return { status: 'unavailable' }
   if (!/^[0-9a-f]{40}$/i.test(data.pull?.sha || '')) return { status: 'unknown', count: latest.count }
   if (latest.sha.toLowerCase() !== data.pull.sha.toLowerCase()) return { status: 'outdated', count: latest.count }
   return { status: 'current', count: latest.count }

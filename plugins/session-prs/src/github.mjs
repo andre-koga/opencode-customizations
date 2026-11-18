@@ -57,13 +57,14 @@ export function parsePullUrl(url) {
   return { owner: match[1], repo: match[2], number: Number(match[3]) }
 }
 
-export function pullStatus(detail) {
+export function pullStatus(detail, { ci, findings } = {}) {
   if (detail.merged_at) return "Merged"
   if (detail.state === "closed") return "Closed"
   if (detail.mergeable === false || detail.mergeable_state === "dirty") return "Conflicts"
   if (detail.draft) return "Draft"
   if (detail.mergeable_state === "blocked" || detail.mergeable_state === "unstable") return "Not ready"
   if (detail.mergeable === null || detail.mergeable_state === "unknown") return "Checking"
+  if (detail.mergeable === true && detail.mergeable_state === "clean" && ["Passed", "No checks"].includes(ci) && findings?.count === "0" && !findings.outdated) return "Ready"
   return "Open"
 }
 
@@ -73,9 +74,18 @@ export function reviewFindings(comments, head) {
   const sorted = comments.filter((comment) => comment.user?.login === "github-actions[bot]").toSorted((a, b) => (a.created_at || "").localeCompare(b.created_at || ""))
   let latest
   for (const comment of sorted) {
-    for (const match of (comment.body || "").matchAll(/<!--\s*review-done\s+sha=([0-9a-f]{40})\s+findings=(0|[1-9][0-9]*)\s*-->/gi)) latest = { sha: match[1], count: match[2] }
+    for (const match of (comment.body || "").matchAll(/<!--\s*review-done\b([\s\S]*?)-->/gi)) {
+      const fields = {}, duplicates = new Set()
+      for (const token of match[1].matchAll(/(?:^|\s)(sha|open|findings)=([^\s]+)/gi)) {
+        const key = token[1].toLowerCase()
+        if (key in fields) duplicates.add(key)
+        fields[key] = token[2]
+      }
+      const count = /(?:^|\s)open=/i.test(match[1]) ? fields.open : fields.findings
+      latest = duplicates.size || !/^[0-9a-f]{40}$/i.test(fields.sha || "") || !/^(0|[1-9][0-9]*)$/.test(count || "") ? { invalid: true } : { sha: fields.sha, count }
+    }
   }
-  if (!latest || !/^[0-9a-f]{40}$/i.test(head || "")) return null
+  if (!latest || latest.invalid || !/^[0-9a-f]{40}$/i.test(head || "")) return null
   return { count: latest.count, outdated: latest.sha.toLowerCase() !== head.toLowerCase() }
 }
 
@@ -92,11 +102,13 @@ export async function readPullById(ref, directory, fetch = api) {
     fetch(`${root}/commits/${detail.head.sha}/status?per_page=100`, directory || undefined),
     detail.comments > 0 ? fetch(`${root}/issues/${ref.number}/comments?per_page=100&page=${page}`, directory || undefined).catch(() => null) : Promise.resolve([]),
   ])
+  const ci = checkStatus(checks.check_runs, status.statuses)
+  const findings = reviewFindings(comments, detail.head.sha)
   return {
     number: ref.number, url: `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}`,
     repo: `${ref.owner}/${ref.repo}`, title: detail.title || "", branch: detail.head.ref,
-    status: pullStatus(detail), ci: checkStatus(checks.check_runs, status.statuses),
-    findings: reviewFindings(comments, detail.head.sha),
+    status: pullStatus(detail, { ci, findings }), ci,
+    findings,
   }
 }
 

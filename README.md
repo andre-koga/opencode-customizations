@@ -12,6 +12,7 @@ My useful OpenCode plugins, skills, agents, commands, and global instructions, b
 - `agents/planner.md`: a planning-only agent that investigates, asks questions, and saves a Markdown plan for a builder to maintain.
 - `skills/pr-followthrough`: an explicitly invoked workflow for following up on PRs created in the current conversation.
 - `commands/tldr.md`: a concise conversation-summary command.
+- `commands/save-custom-setup.md`: `/save-custom-setup` backs up and pushes global customizations to this repository with safety checks.
 - `AGENTS.md`: my global OpenCode working instructions, including worktree and plan-maintenance policies.
 
 The desktop plugins use experimental OpenCode APIs and may need changes after OpenCode updates. See each plugin's README for its behavior and limitations. The checked-in `gui-experimental.cjs` files are the plugin entry points; sources, tests, and dependency lockfiles are included where available.

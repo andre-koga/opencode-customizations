@@ -69,6 +69,29 @@ test("uses the latest bot review marker and flags findings from an old commit", 
   assert.deepEqual(reviewFindings([{ user: { login: "github-actions[bot]" }, body: marker(head, 0) }], head), { count: "0", outdated: false })
 })
 
+test("latest open count supersedes old findings, while malformed markers are unknown", () => {
+  const head = "a".repeat(40), old = "b".repeat(40)
+  const comments = [
+    { user: { login: "github-actions[bot]" }, created_at: "2026-01-01", body: `<!-- review-done sha=${old} findings=5 -->` },
+    { user: { login: "github-actions[bot]" }, created_at: "2026-01-02", body: `<!-- review-done sha=${head} open=0 -->` },
+  ]
+  assert.deepEqual(reviewFindings(comments, head), { count: "0", outdated: false })
+  assert.deepEqual(reviewFindings([{ user: { login: "github-actions[bot]" }, body: `<!-- review-done findings=5 open=0 sha=${head} -->` }], head), { count: "0", outdated: false })
+  assert.equal(reviewFindings([...comments, { user: { login: "github-actions[bot]" }, created_at: "2026-01-03", body: `<!-- review-done sha=${head} open=bad -->` }], head), null)
+  assert.equal(reviewFindings([{ user: { login: "github-actions[bot]" }, body: `<!-- review-done sha=${head} open=0 open=2 -->` }], head), null)
+})
+
+test("only marks zero-findings PRs ready when GitHub and checks are clear", () => {
+  const clean = { state: "open", mergeable: true, mergeable_state: "clean" }
+  const findings = { count: "0", outdated: false }
+  assert.equal(pullStatus(clean, { ci: "Passed", findings }), "Ready")
+  assert.equal(pullStatus(clean, { ci: "Running", findings }), "Open")
+  assert.equal(pullStatus(clean, { ci: "Failed", findings }), "Open")
+  assert.equal(pullStatus(clean, { ci: "Passed", findings: { count: "0", outdated: true } }), "Open")
+  assert.equal(pullStatus({ ...clean, mergeable_state: "blocked" }, { ci: "Passed", findings }), "Not ready")
+  assert.equal(pullStatus(clean, { ci: "Passed", findings: null }), "Open")
+})
+
 test("loads the most recent issue-comment page and tolerates a comments API error", async () => {
   const head = "a".repeat(40)
   const paths = []
