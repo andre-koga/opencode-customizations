@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { applyGithubAction, makeReader, parsePullUrl, primaryAction, readPull } from '../src/github.mjs'
+import { applyGithubAction, conversationCount, findingsSummary, makeReader, parsePullUrl, primaryAction, readPull, readUnresolvedThreads } from '../src/github.mjs'
 
 test('accepts only genuine GitHub PR URLs and canonicalizes paths and fragments', () => {
   assert.deepEqual(parsePullUrl('https://github.com/acme/widget/pull/42/files#diff-1'), { owner: 'acme', repo: 'widget', number: 42, url: 'https://github.com/acme/widget/pull/42' })
@@ -22,7 +22,7 @@ test('loads details, checks, reviews, discussion and patches using REST paths', 
     if (path.includes('/status?')) return { total_count: 0, statuses: [] }
     throw Error('unexpected path')
   }
-  const result = await readPull('https://github.com/acme/widget/pull/42', api)
+  const result = await readPull('https://github.com/acme/widget/pull/42', api, async () => true)
   assert.equal(paths.length, 7)
   assert.equal(result.pull.title, 'Example')
   assert.equal(result.reviews[0].state, 'APPROVED')
@@ -30,6 +30,7 @@ test('loads details, checks, reviews, discussion and patches using REST paths', 
   assert.equal(result.inline[0].path, 'file.ts')
   assert.equal(result.files[0].patch, '+ok')
   assert.equal(result.checks[0].conclusion, 'success')
+  assert.equal(result.unresolvedThreads, true)
 })
 
 test('reports failed sections instead of hiding available data', async () => {
@@ -40,9 +41,55 @@ test('reports failed sections instead of hiding available data', async () => {
     if (path.includes('/status?')) return { statuses: [] }
     return []
   }
-  const result = await readPull('https://github.com/acme/widget/pull/42', api)
+  const result = await readPull('https://github.com/acme/widget/pull/42', api, async () => { throw Error('unavailable') })
   assert.equal(result.reviews, null)
   assert.deepEqual(result.comments, [])
+  assert.equal(result.unresolvedThreads, null)
+})
+
+test('reads review thread resolution conservatively, including partial pages', async () => {
+  const ref = { owner: 'acme', repo: 'widget', number: 42 }
+  const response = (nodes, hasNextPage) => async (command, args) => {
+    assert.equal(command, 'gh')
+    assert.ok(args.includes('graphql'))
+    assert.ok(args.includes('owner=acme'))
+    assert.ok(args.includes('number=42'))
+    return { stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes, pageInfo: { hasNextPage } } } } } }) }
+  }
+  assert.equal(await readUnresolvedThreads(ref, response([{ isResolved: false }], false)), true)
+  assert.equal(await readUnresolvedThreads(ref, response([{ isResolved: true }], false)), false)
+  assert.equal(await readUnresolvedThreads(ref, response([{ isResolved: false }], true)), true)
+  assert.equal(await readUnresolvedThreads(ref, response([{ isResolved: true }], true)), null)
+  await assert.rejects(readUnresolvedThreads(ref, response([{}], false)), /unavailable/)
+})
+
+test('counts comments and review bodies, marking partial and unavailable counts', () => {
+  const data = { comments: [{}, {}], inline: [{}], reviews: [{ body: 'feedback' }, { body: '' }, { body: ' ' }], limited: [] }
+  assert.equal(conversationCount(data), '4')
+  assert.equal(conversationCount({ ...data, limited: ['inline'] }), '4+')
+  assert.equal(conversationCount({ ...data, reviews: null }), '?')
+  assert.equal(conversationCount({ ...data, comments: [], inline: [], reviews: [] }), '0')
+})
+
+test('shows the latest bot finding count separately and flags outdated or incomplete data', () => {
+  const head = 'a'.repeat(40)
+  const marker = (sha, n) => `<!-- review-done sha=${sha} findings=${n} -->`
+  const data = {
+    pull: { sha: head }, limited: [],
+    comments: [
+      { author: 'github-actions[bot]', date: '2026-01-02T00:00:00Z', body: marker(head, 5) },
+      { author: 'github-actions[bot]', date: '2026-01-01T00:00:00Z', body: marker('b'.repeat(40), 2) },
+      { author: 'someone-else', date: '2026-01-03T00:00:00Z', body: marker(head, 99) },
+    ],
+  }
+  assert.equal(findingsSummary(data).label, '5')
+  assert.equal(findingsSummary({ ...data, pull: { sha: 'b'.repeat(40) } }).label, '5, outdated')
+  assert.equal(findingsSummary({ ...data, pull: {} }).label, '5, unknown')
+  assert.equal(findingsSummary({ ...data, comments: [] }).label, '—')
+  assert.equal(findingsSummary({ ...data, comments: null }).label, '?')
+  assert.equal(findingsSummary({ ...data, limited: ['comments'] }).label, '?')
+  assert.equal(findingsSummary({ ...data, comments: [{ author: 'github-actions[bot]', body: marker(head, 0) }] }).label, '0')
+  assert.equal(findingsSummary({ ...data, comments: [{ author: 'github-actions[bot]', body: `<!-- review-done sha=${head} findings=-1 -->` }] }).label, '—')
 })
 
 test('shares requests, rate limits refreshes, and retries after failure', async () => {
@@ -62,7 +109,55 @@ test('shares requests, rate limits refreshes, and retries after failure', async 
 const ready = () => ({
   pull: { state: 'Open', sha: 'a'.repeat(40), mergeable: true, mergeableState: 'clean' },
   checks: [{ name: 'build', status: 'completed', conclusion: 'success' }],
-  statuses: [], reviews: [], limited: [],
+  statuses: [], reviews: [], comments: [], unresolvedThreads: false, limited: [],
+})
+
+test('blocks current bot findings but not zero, outdated, or absent markers', () => {
+  const d = ready()
+  const marker = (sha, count) => ({ author: 'github-actions[bot]', body: `<!-- review-done sha=${sha} findings=${count} -->` })
+  const current = { ...d, comments: [marker(d.pull.sha, 2)] }
+  const action = primaryAction(current)
+  assert.equal(action.kind, 'blocked')
+  assert.equal(action.label, 'Ask agent to fix review findings (2)')
+  assert.match(action.task, /2 current bot review findings/)
+  assert.equal(primaryAction({ ...current, checks: [{ status: 'completed', conclusion: 'failure' }] }).label, 'Ask agent to fix CI/CD and resolve comments')
+  assert.match(primaryAction({ ...current, unresolvedThreads: true }).task, /unresolved review comments.*2 current bot review findings/)
+  assert.equal(primaryAction({ ...d, comments: [marker(d.pull.sha, 0)] }).kind, 'ready')
+  assert.equal(primaryAction({ ...d, comments: [marker('b'.repeat(40), 2)] }).kind, 'ready')
+  assert.equal(primaryAction(d).kind, 'ready')
+  assert.equal(primaryAction({ ...d, comments: null }).kind, 'unknown')
+  assert.equal(primaryAction({ ...current, limited: ['comments'] }).kind, 'unknown')
+  assert.equal(primaryAction({ ...current, pull: { ...d.pull, state: 'Draft' } }).kind, 'draft')
+})
+
+test('fresh merge recheck rejects current findings without calling GitHub merge', async () => {
+  let called = false
+  const d = ready()
+  const data = { ...d, comments: [{ author: 'github-actions[bot]', body: `<!-- review-done sha=${d.pull.sha} findings=2 -->` }] }
+  await assert.rejects(applyGithubAction({ url: 'https://github.com/acme/repo/pull/42', action: 'merge', expectedHead: d.pull.sha }, {
+    read: async () => data,
+    run: async () => { called = true; return { stdout: '{"merged":true}' } },
+  }), /no longer ready/)
+  assert.equal(called, false)
+})
+
+test('labels and prompts match known CI and unresolved-comment blockers', () => {
+  const d = ready()
+  const failed = [{ status: 'completed', conclusion: 'failure' }]
+  const ci = primaryAction({ ...d, checks: failed })
+  const comments = primaryAction({ ...d, unresolvedThreads: true })
+  const both = primaryAction({ ...d, checks: failed, unresolvedThreads: true })
+  assert.equal(ci.label, 'Ask agent to fix CI/CD issues')
+  assert.match(ci.task, /CI\/CD/)
+  assert.equal(comments.label, 'Ask agent to resolve comments')
+  assert.match(comments.task, /unresolved review comments/)
+  assert.equal(both.label, 'Ask agent to fix CI/CD and resolve comments')
+  assert.match(both.task, /CI\/CD.*unresolved review comments/)
+  assert.equal(primaryAction({ ...d, unresolvedThreads: null }).kind, 'unknown')
+  assert.equal(primaryAction({ ...d, checks: failed, unresolvedThreads: null }).label, 'Ask agent to fix CI/CD issues')
+  assert.equal(primaryAction({ ...d, checks: null, unresolvedThreads: true }).label, 'Ask agent to resolve comments')
+  assert.equal(primaryAction({ ...d, reviews: [{ author: 'reviewer', state: 'CHANGES_REQUESTED' }] }).label, 'Ask agent to address review feedback')
+  assert.equal(primaryAction({ ...d, pull: { ...d.pull, mergeableState: 'blocked' } }).label, 'Ask agent to fix issues')
 })
 
 test('chooses conservative action states for drafts, conflicts, errors, waiting, and readiness', () => {
@@ -82,6 +177,22 @@ test('chooses conservative action states for drafts, conflicts, errors, waiting,
   assert.equal(primaryAction({ ...d, statuses: [{ name: 'ci', status: 'success' }, { name: 'ci', status: 'failure' }] }).kind, 'ready')
   assert.equal(primaryAction({ ...d, pull: { ...d.pull, mergeableState: 'blocked' } }).kind, 'blocked')
   assert.equal(primaryAction({ ...d, pull: { ...d.pull, state: 'Merged' } }).kind, 'closed')
+})
+
+test('shows completed successful checks and current status contexts while checks run', () => {
+  const d = ready()
+  assert.equal(primaryAction({ ...d, checks: [{ status: 'in_progress', conclusion: null }] }).label, 'Checks running (0/1)')
+  assert.equal(primaryAction({ ...d, checks: [
+    { status: 'completed', conclusion: 'success' },
+    { status: 'completed', conclusion: 'skipped' },
+    { status: 'in_progress', conclusion: null },
+  ], statuses: [
+    { name: 'deploy', status: 'success' },
+    { name: 'deploy', status: 'failure' },
+    { name: 'security', status: 'pending' },
+  ] }).label, 'Checks running (2/5)')
+  assert.equal(primaryAction({ ...d, checks: [], statuses: [{ name: 'ci', status: 'pending' }] }).label, 'Checks running (0/1)')
+  assert.equal(primaryAction({ ...d, checks: [{ status: 'in_progress', conclusion: 'success' }] }).label, 'Checks running (0/1)')
 })
 
 test('confirmed merge rechecks state and sends the expected SHA without force or branch deletion', async () => {

@@ -18,12 +18,30 @@ test("reads paginated history and flags bounded history", async () => {
   const calls = []
   const client = { message: { list: async (input) => {
     calls.push(input)
+    if (input.cursor && input.order) throw new Error("cursor cannot be combined with order")
     return input.cursor ? { data: [{ type: "user", text: "https://github.com/a/b/pull/2" }], cursor: { next: "another" } } : { data: [{ type: "user", text: "https://github.com/a/b/pull/1" }], cursor: { next: "next" } }
   } } }
   const result = await sessionPullReferences(client, "ses_test", { maxPages: 2, pageSize: 10 })
   assert.deepEqual(result.urls, ["https://github.com/a/b/pull/1", "https://github.com/a/b/pull/2"])
   assert.equal(result.truncated, true)
-  assert.deepEqual(calls[1], { sessionID: "ses_test", limit: 10, order: "desc", cursor: "next" })
+  assert.deepEqual(calls[0], { sessionID: "ses_test", limit: 10, order: "desc" })
+  assert.deepEqual(calls[1], { sessionID: "ses_test", limit: 10, cursor: "next" })
+})
+
+test("preserves PRs already found if a later page fails", async () => {
+  const client = { message: { list: async (input) => {
+    if (input.cursor) throw new Error("server unavailable")
+    return { data: [{ type: "user", text: "https://github.com/a/b/pull/12" }], cursor: { next: "next" } }
+  } } }
+  const result = await sessionPullReferences(client, "ses_test")
+  assert.deepEqual(result.urls, ["https://github.com/a/b/pull/12"])
+  assert.equal(result.incomplete, true)
+  assert.equal(result.truncated, false)
+})
+
+test("reports first-page errors instead of showing empty history as complete", async () => {
+  const client = { message: { list: async () => { throw new Error("offline") } } }
+  await assert.rejects(sessionPullReferences(client, "ses_test"), /offline/)
 })
 
 test("reports when reference limit is reached", () => {

@@ -1,11 +1,14 @@
 import { Schema } from 'effect'
 import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js'
 import { Contract, Ipc, Panel, Plugin } from '@opencode/plugin/gui'
-import { applyGithubAction, makeReader, parsePullUrl, primaryAction } from './github.mjs'
+import { applyGithubAction, conversationCount, findingsSummary, makeReader, parsePullUrl, primaryAction } from './github.mjs'
+import { confirmPrimaryAction } from './confirmation.mjs'
+import { createViewCache } from './view-cache.mjs'
 
 const Navigation = Contract.define('native-pr.open')
 const Backend = Ipc.define({
-  id: 'native-pr.read',
+  // Changing the method set requires a new ID: the host caches IPC clients by ID.
+  id: 'native-pr.backend-v2',
   methods: {
     read: { input: Schema.String, output: Schema.Unknown },
     action: { input: Schema.Struct({ url: Schema.String, action: Schema.String, expectedHead: Schema.String }) },
@@ -20,6 +23,7 @@ const wrap = { 'white-space': 'pre-wrap', 'overflow-wrap': 'anywhere' }
 export default Plugin.define({
   setup(ctx) {
     const backend = ctx.main(Backend)
+    const cache = createViewCache({ read: (url: string) => backend.read(url) })
     const tabs = new Map<string, { id: string; title: string; closable: 'compact' }>()
     const tabFor = (id: string) => {
       const existing = tabs.get(id)
@@ -56,24 +60,36 @@ export default Plugin.define({
       let generation = 0
       let disposed = false
       const url = () => { try { return decodeURIComponent(props.tab().id) } catch { return '' } }
+      const display = (result: any) => {
+        setData(result.data)
+        setStamp(`${result.cached ? 'Cached' : 'Checked'} ${new Date(result.checkedAt).toLocaleTimeString()}`)
+      }
       const load = async () => {
         const call = ++generation
+        const target = url()
         setBusy(true); setError('')
         try {
-          const result: any = await backend.read(url())
+          const result: any = await cache.load(target)
           if (disposed || call !== generation) return
-          setData(result.data)
-          setStamp(`${result.cached ? 'Cached' : 'Checked'} ${new Date(result.checkedAt).toLocaleTimeString()}`)
+          display(result)
         } catch (err) {
           if (!disposed && call === generation) setError(err instanceof Error ? err.message : String(err))
         } finally { if (!disposed && call === generation) setBusy(false) }
       }
-      createEffect(() => { props.tab().id; setData(undefined); setView('Overview'); setNotice(''); void load() })
+      createEffect(() => {
+        props.tab().id
+        generation++; setView('Overview'); setNotice(''); setError(''); setBusy(false)
+        const cached = cache.get(url())
+        if (cached) display(cached)
+        else { setData(undefined); setStamp('') }
+        if (!cached?.fresh) void load()
+      })
       onCleanup(() => { disposed = true; generation++ })
       const runPrimary = async () => {
         const current = data()
         if (!current || actionBusy()) return
-        const state = primaryAction(current).kind
+        const action = primaryAction(current)
+        const state = action.kind
         const target = current.ref.url
         setActionBusy(true); setError(''); setNotice('')
         try {
@@ -82,27 +98,21 @@ export default Plugin.define({
             if (!active) throw new Error('No active OpenCode thread is available.')
             const task = state === 'conflict'
               ? 'Investigate and resolve the merge conflicts for'
-              : 'Investigate and address the failing checks, review feedback, or other merge blockers for'
+              : action.task || 'Investigate and address merge blockers for'
             await active.server.client.session.prompt({ sessionID: active.id, delivery: 'queue', text: `${task} ${target}. Verify the current PR status, follow repository and worktree instructions, and do not merge the PR.` })
             if (!disposed) setNotice('Request sent to the active thread.')
             return
           }
           if (state !== 'ready' && state !== 'draft') return
           const isMerge = state === 'ready'
-          const confirmed = await ctx.dialogs.confirm({
-            title: isMerge ? 'Merge this pull request?' : 'Mark this pull request ready?',
-            description: isMerge
-              ? `Merge ${current.ref.owner}/${current.ref.repo} #${current.ref.number} into ${current.pull.base} with a merge commit. GitHub will enforce its rules. The PR status and head commit will be checked again.`
-              : `Mark ${current.ref.owner}/${current.ref.repo} #${current.ref.number} ready for review? This can notify reviewers and start review automation.`,
-            confirm: isMerge ? 'Merge pull request' : 'Mark ready',
-            danger: isMerge,
-          })
+          const confirmed = await confirmPrimaryAction(state, current, (options) => ctx.dialogs.confirm(options))
           if (!confirmed || disposed) return
           if (url() !== target) throw new Error('The selected pull request changed. Try again from its panel.')
-          await backend.action({ url: target, action: isMerge ? 'merge' : 'ready', expectedHead: current.pull.sha })
-          if (!disposed) { setNotice(isMerge ? 'Pull request merged.' : 'Pull request marked ready for review.'); await load() }
+          try { await backend.action({ url: target, action: isMerge ? 'merge' : 'ready', expectedHead: current.pull.sha }) }
+          finally { cache.invalidate(target) }
+          if (!disposed && url() === target) { setNotice(isMerge ? 'Pull request merged.' : 'Pull request marked ready for review.'); await load() }
         } catch (err) {
-          if (!disposed) setError(err instanceof Error ? err.message : String(err))
+          if (!disposed && url() === target) setError(err instanceof Error ? err.message : String(err))
         } finally { if (!disposed) setActionBusy(false) }
       }
       const conversation = () => {
@@ -133,7 +143,8 @@ export default Plugin.define({
             <Show when={primaryAction(d()).kind === 'unknown'}><span style={{ color: colors.muted }}>Refresh when GitHub has finished calculating status.</span></Show>
           </div>
           <div style={{ display: 'flex', gap: '5px', 'border-bottom': `1px solid ${colors.border}`, 'margin': '16px 0 12px', 'padding-bottom': '8px', 'flex-wrap': 'wrap' }}>
-            <For each={['Overview', 'Conversation', 'Checks', 'Files']}>{(name) => <button type="button" style={{ ...button, 'border-color': view() === name ? colors.accent : colors.border }} onClick={() => setView(name)}>{name}</button>}</For>
+            <For each={['Overview', 'Conversation', 'Checks', 'Files']}>{(name) => <button type="button" style={{ ...button, 'border-color': view() === name ? colors.accent : colors.border }} onClick={() => setView(name)}>{name === 'Conversation' ? `Conversation (${conversationCount(d())})` : name}</button>}</For>
+            <span title={findingsSummary(d()).detail} style={{ display: 'inline-flex', 'align-items': 'center', padding: '6px 10px', color: colors.muted }}>Findings ({findingsSummary(d()).label})</span>
           </div>
           <Show when={view() === 'Overview'}><div style={section}><strong>Description</strong><div style={{ ...wrap, 'margin-top': '8px' }}>{d().pull.body || 'No description.'}</div></div><div style={{ color: colors.muted }}>Changed files: {d().pull.changedFiles} · +{d().pull.additions} / −{d().pull.deletions}</div></Show>
           <Show when={view() === 'Conversation'}>

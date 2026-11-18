@@ -67,23 +67,36 @@ export function pullStatus(detail) {
   return "Open"
 }
 
-export async function readPullById(ref, directory) {
+/** Use the latest completed GitHub Actions review, not the total number of comments. */
+export function reviewFindings(comments, head) {
+  if (!Array.isArray(comments)) return null
+  const sorted = comments.filter((comment) => comment.user?.login === "github-actions[bot]").toSorted((a, b) => (a.created_at || "").localeCompare(b.created_at || ""))
+  let latest
+  for (const comment of sorted) {
+    for (const match of (comment.body || "").matchAll(/<!--\s*review-done\s+sha=([0-9a-f]{40})\s+findings=(0|[1-9][0-9]*)\s*-->/gi)) latest = { sha: match[1], count: match[2] }
+  }
+  if (!latest || !/^[0-9a-f]{40}$/i.test(head || "")) return null
+  return { count: latest.count, outdated: latest.sha.toLowerCase() !== head.toLowerCase() }
+}
+
+export async function readPullById(ref, directory, fetch = api) {
   // All REST paths are explicit. Do not depend on a potentially moved or
   // deleted worktree, or on repository-specific gh configuration.
   directory = undefined
   const root = `repos/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.repo)}`
-  const detail = await api(`${root}/pulls/${ref.number}`, directory || undefined)
+  const detail = await fetch(`${root}/pulls/${ref.number}`, directory || undefined)
   if (!detail.head?.sha || !detail.head?.ref) throw new Error("PR details are incomplete")
-  const [reviews, checks, status] = await Promise.all([
-    api(`${root}/pulls/${ref.number}/reviews?per_page=100`, directory || undefined),
-    api(`${root}/commits/${detail.head.sha}/check-runs?per_page=100`, directory || undefined),
-    api(`${root}/commits/${detail.head.sha}/status?per_page=100`, directory || undefined),
+  const page = Math.max(1, Math.ceil((detail.comments || 0) / 100))
+  const [checks, status, comments] = await Promise.all([
+    fetch(`${root}/commits/${detail.head.sha}/check-runs?per_page=100`, directory || undefined),
+    fetch(`${root}/commits/${detail.head.sha}/status?per_page=100`, directory || undefined),
+    detail.comments > 0 ? fetch(`${root}/issues/${ref.number}/comments?per_page=100&page=${page}`, directory || undefined).catch(() => null) : Promise.resolve([]),
   ])
   return {
     number: ref.number, url: `https://github.com/${ref.owner}/${ref.repo}/pull/${ref.number}`,
-    repo: `${ref.owner}/${ref.repo}`, branch: detail.head.ref,
+    repo: `${ref.owner}/${ref.repo}`, title: detail.title || "", branch: detail.head.ref,
     status: pullStatus(detail), ci: checkStatus(checks.check_runs, status.statuses),
-    review: reviewStatus(reviews), comments: (detail.comments || 0) + (detail.review_comments || 0),
+    findings: reviewFindings(comments, detail.head.sha),
   }
 }
 
@@ -127,7 +140,7 @@ export async function readReferencedPulls(urls, read, directory, concurrency = 4
       try { results[index] = await read(url, directory) }
       catch {
         const ref = parsePullUrl(url)
-        if (ref) results[index] = { ...ref, repo: `${ref.owner}/${ref.repo}`, url, status: "Unavailable", ci: "Unknown", review: "Unknown", comments: null }
+        if (ref) results[index] = { ...ref, repo: `${ref.owner}/${ref.repo}`, url, status: "Unavailable", ci: "Unknown", findings: null }
       }
     }
   }

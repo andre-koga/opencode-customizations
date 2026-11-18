@@ -42,3 +42,40 @@ test('registers a native panel and routes a validated PR into its session', () =
   assert.equal(listed.length, 1)
   assert.equal(listed[0].title, 'repo #42')
 })
+
+test('window and main register the same versioned IPC with read and action methods', async () => {
+  const exports = {}
+  const plugin = {
+    Contract: { define: (id) => ({ id }) },
+    Ipc: { define: (spec) => spec },
+    Panel: Symbol('panel'),
+    Plugin: { define: (definition) => definition },
+  }
+  const modules = {
+    'solid-js/web': { template: () => () => {}, delegateEvents() {} },
+    'solid-js': {},
+    effect: { Schema: { String: {}, Unknown: {}, Struct: (shape) => shape } },
+    '@opencode/plugin/gui': plugin,
+    'node:child_process': { execFile() {} },
+    'node:util': { promisify: () => async () => ({ stdout: '{}' }) },
+  }
+  runInNewContext(readFileSync(new URL('../gui-experimental.cjs', import.meta.url), 'utf8'), {
+    exports, require: (name) => { if (!modules[name]) throw Error(name); return modules[name] }, URL, encodeURIComponent, decodeURIComponent,
+  })
+  let clientSpec, providerSpec, implementation
+  exports.default.setup({
+    main: (spec) => { clientSpec = spec; return {} },
+    provide() {},
+    add() {},
+  })
+  exports.default.main({
+    provide: (spec, impl) => { providerSpec = spec; implementation = impl },
+    log: { write() {} },
+  })
+  assert.equal(clientSpec, providerSpec)
+  assert.equal(clientSpec.id, 'native-pr.backend-v2')
+  assert.deepEqual(Object.keys(clientSpec.methods).sort(), ['action', 'read'])
+  assert.equal(typeof implementation.read, 'function')
+  assert.equal(typeof implementation.action, 'function')
+  await assert.rejects(implementation.action({ url: 'invalid', action: 'ready', expectedHead: 'a'.repeat(40) }), /Invalid pull request/)
+})

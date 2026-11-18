@@ -30,8 +30,17 @@ export async function sessionPullReferences(client, sessionID, { maxPages = 10, 
   const messages = []
   let cursor
   let truncated = false
+  let incomplete = false
   for (let page = 0; page < maxPages; page++) {
-    const result = await client.message.list({ sessionID, limit: pageSize, order: "desc", ...(cursor ? { cursor } : {}) })
+    // A cursor already encodes ordering; the API rejects `order` alongside it.
+    let result
+    try {
+      result = await client.message.list({ sessionID, limit: pageSize, ...(cursor ? { cursor } : { order: "desc" }) })
+    } catch (error) {
+      if (page === 0) throw error
+      incomplete = true
+      break
+    }
     messages.push(...result.data)
     const next = result.cursor?.next
     if (!next || next === cursor) break
@@ -47,5 +56,5 @@ export async function sessionPullReferences(client, sessionID, { maxPages = 10, 
     }
   }
   const directories = [...locations]
-  return { urls: refs.urls, directories: directories.slice(0, 20), truncated: truncated || refs.truncated || directories.length > 20 }
+  return { urls: refs.urls, directories: directories.slice(0, 20), truncated: truncated || refs.truncated || directories.length > 20, incomplete }
 }

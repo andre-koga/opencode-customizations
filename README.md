@@ -6,7 +6,8 @@ My useful OpenCode plugins, skills, agents, commands, and global instructions, b
 
 - `plugins/github-pr-links`: opens GitHub pull request links in the native PR viewer when available, otherwise the OpenCode browser.
 - `plugins/session-prs`: the **Orchestrator** side panel for open chat sessions and their related PRs.
-- `plugins/native-pr`: a native GitHub PR viewer with explicit confirmation for supported actions.
+- `plugins/native-pr`: a native GitHub PR viewer with cached results, review findings, and confirmation before merging.
+- `plugins/plan-renderer`: a Markdown plan side panel with task progress and a Build button that switches the current chat to the build agent.
 - `plugins/persistent-github`: an experimental GitHub panel with a separate persistent browser profile.
 - `agents/planner.md`: a planning-only agent that investigates, asks questions, and saves a Markdown plan for a builder to maintain.
 - `skills/pr-followthrough`: an explicitly invoked workflow for following up on PRs created in the current conversation.
@@ -20,16 +21,16 @@ The desktop plugins use experimental OpenCode APIs and may need changes after Op
 1. Clone this repository and review its contents, especially `AGENTS.md`, before using it. Back up your existing `~/.config/opencode` directory first.
 2. Copy the desired directories (`plugins`, `agents`, `skills`, and `commands`) into `~/.config/opencode/`, taking care not to overwrite customizations you want to keep. Copy or merge `AGENTS.md` only if you want these global instructions.
 3. For plugins with a `package-lock.json`, run `npm ci` in the plugin directory if dependencies are needed. Run `npm test` there to check the plugin, and `npm run build` to rebuild its entry point when changing source. `github-pr-links` has no build step in this backup.
-4. Merge the desired plugin entries into your existing `~/.config/opencode/opencode.jsonc`; preserve other configuration. For example, the two active at the time of this backup were:
+4. Merge the desired plugin entries into your existing `~/.config/opencode/opencode.jsonc`; preserve other configuration. For example:
 
    ```jsonc
    {
      "$schema": "https://opencode.ai/config.json",
-     "plugins": ["./plugins/github-pr-links", "./plugins/session-prs"]
+     "plugins": ["./plugins/github-pr-links", "./plugins/session-prs", "./plugins/native-pr", "./plugins/plan-renderer"]
    }
    ```
 
-   Add `./plugins/native-pr` or `./plugins/persistent-github` if you want those plugins too. GitHub features require an authenticated `gh` CLI where described by each plugin.
+   Add `./plugins/persistent-github` if you want the experimental browser panel too. GitHub features require an authenticated `gh` CLI where described by each plugin. The plan renderer opens plan links from chat or the **Open plan renderer** command; ordinary file-tree clicks still use the built-in Markdown viewer.
 
 5. Select **planner** in OpenCode to plan, and explicitly point the build agent at the saved plan when ready. With the included worktree policy, start or move the session into a dedicated task worktree before saving a plan inside a Git repository; the planner itself cannot run shell commands or create worktrees.
 

@@ -21,23 +21,82 @@ export async function ghApi(path) {
   return JSON.parse(stdout)
 }
 
+/** GitHub exposes review-thread resolution through GraphQL, not the comments REST API. */
+export async function readUnresolvedThreads(ref, run = exec) {
+  const query = 'query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved} pageInfo{hasNextPage}}}}}'
+  const { stdout } = await run('gh', ['api', '--hostname', 'github.com', 'graphql', '-f', `query=${query}`, '-f', `owner=${ref.owner}`, '-f', `repo=${ref.repo}`, '-F', `number=${ref.number}`], { timeout: 20000, maxBuffer: 1024 * 1024 })
+  const result = JSON.parse(stdout)
+  const threads = result.data?.repository?.pullRequest?.reviewThreads
+  if (result.errors?.length || !Array.isArray(threads?.nodes) || typeof threads.pageInfo?.hasNextPage !== 'boolean' || threads.nodes.some((node) => typeof node?.isResolved !== 'boolean')) throw new Error('Review thread status unavailable.')
+  if (threads.nodes.some((node) => !node.isResolved)) return true
+  return threads.pageInfo.hasNextPage ? null : false
+}
+
+/** Count actual comment bodies, not empty approval or change-request events. */
+export function conversationCount(data) {
+  if (!data || [data.comments, data.inline, data.reviews].some((part) => !Array.isArray(part))) return '?'
+  const count = data.comments.length + data.inline.length + data.reviews.filter((review) => !!review.body?.trim()).length
+  return `${count}${data.limited.some((part) => ['comments', 'inline', 'reviews'].includes(part)) ? '+' : ''}`
+}
+
+/** The latest GitHub Actions review marker describes one specific PR head. */
+export function reviewFindings(data) {
+  if (!Array.isArray(data?.comments) || data.limited?.includes('comments')) return { status: 'unavailable' }
+  const comments = data.comments.filter((comment) => comment.author === 'github-actions[bot]').toSorted((a, b) => (a.date || '').localeCompare(b.date || ''))
+  let latest
+  for (const comment of comments) {
+    for (const match of (comment.body || '').matchAll(/<!--\s*review-done\s+sha=([0-9a-f]{40})\s+findings=(0|[1-9][0-9]*)\s*-->/gi)) latest = { sha: match[1], count: match[2] }
+  }
+  if (!latest) return { status: 'none' }
+  if (!/^[0-9a-f]{40}$/i.test(data.pull?.sha || '')) return { status: 'unknown', count: latest.count }
+  if (latest.sha.toLowerCase() !== data.pull.sha.toLowerCase()) return { status: 'outdated', count: latest.count }
+  return { status: 'current', count: latest.count }
+}
+
+export function findingsSummary(data) {
+  const findings = reviewFindings(data)
+  if (findings.status === 'unavailable') return { label: '?', detail: 'Findings unavailable: comments could not be fully loaded.' }
+  if (findings.status === 'none') return { label: '—', detail: 'No completed bot review marker found.' }
+  if (findings.status === 'unknown') return { label: `${findings.count}, unknown`, detail: 'The current PR head is unavailable.' }
+  if (findings.status === 'outdated') return { label: `${findings.count}, outdated`, detail: 'The latest bot review is for an earlier commit.' }
+  return { label: findings.count, detail: 'Findings reported by the latest completed bot review for this commit.' }
+}
+
 /** Conservative state: never offer merging while GitHub's answer is incomplete. */
 export function primaryAction(data) {
   const p = data?.pull
   if (!p || p.state === 'Merged' || p.state === 'Closed') return { kind: 'closed', label: p?.state || 'Unavailable' }
   if (p.state === 'Draft') return { kind: 'draft', label: 'Mark ready for review' }
   if (p.mergeable === false || p.mergeableState === 'dirty') return { kind: 'conflict', label: 'Ask agent to fix conflicts' }
-  if (p.mergeable !== true || !p.mergeableState || p.mergeableState === 'unknown') return { kind: 'unknown', label: 'Checking mergeability' }
-  if (data.checks === null || data.statuses === null || data.reviews === null || data.limited.some((x) => ['checks', 'statuses', 'reviews'].includes(x))) return { kind: 'unknown', label: 'Status unavailable' }
-
   // Combined statuses are newest first; an old failed run is not the current status.
   const statuses = new Map()
-  for (const status of data.statuses) if (!statuses.has(status.name)) statuses.set(status.name, status.status)
+  for (const status of data.statuses ?? []) if (!statuses.has(status.name)) statuses.set(status.name, status.status)
   const decisions = new Map()
-  for (const review of data.reviews) if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) decisions.set(review.author, review.state)
-  const failed = data.checks.some((check) => ['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale'].includes(check.conclusion)) || [...statuses.values()].some((state) => ['failure', 'error'].includes(state))
-  if (failed || [...decisions.values()].includes('CHANGES_REQUESTED')) return { kind: 'blocked', label: 'Ask agent to fix issues' }
-  if (data.checks.some((check) => check.status !== 'completed') || [...statuses.values()].some((state) => ['pending', 'expected'].includes(state))) return { kind: 'pending', label: 'Checks running' }
+  for (const review of data.reviews ?? []) if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) decisions.set(review.author, review.state)
+  const failed = (data.checks ?? []).some((check) => ['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale'].includes(check.conclusion)) || [...statuses.values()].some((state) => ['failure', 'error'].includes(state))
+  const comments = data.unresolvedThreads === true
+  const feedback = [...decisions.values()].includes('CHANGES_REQUESTED')
+  const findings = reviewFindings(data)
+  const hasFindings = findings.status === 'current' && findings.count !== '0'
+  if (failed || comments || feedback || hasFindings) {
+    const label = failed && (comments || hasFindings) ? 'Ask agent to fix CI/CD and resolve comments'
+      : failed && feedback ? 'Ask agent to fix CI/CD and address review feedback'
+      : failed ? 'Ask agent to fix CI/CD issues'
+      : comments && hasFindings ? 'Ask agent to resolve comments and findings'
+      : comments ? 'Ask agent to resolve comments'
+      : hasFindings ? `Ask agent to fix review findings (${findings.count})`
+      : 'Ask agent to address review feedback'
+    const items = [failed && 'fix CI/CD failures', comments && 'address unresolved review comments', hasFindings && `address ${findings.count} current bot review findings`, feedback && 'address requested review changes'].filter(Boolean)
+    return { kind: 'blocked', label, task: `Investigate and ${items.join(' and ')} for` }
+  }
+  if (p.mergeable !== true || !p.mergeableState || p.mergeableState === 'unknown') return { kind: 'unknown', label: 'Checking mergeability' }
+  if (data.checks === null || data.statuses === null || data.reviews === null || data.limited.some((x) => ['checks', 'statuses', 'reviews'].includes(x))) return { kind: 'unknown', label: 'Status unavailable' }
+  if (data.unresolvedThreads !== false) return { kind: 'unknown', label: 'Review thread status unavailable' }
+  if (findings.status === 'unavailable' || findings.status === 'unknown') return { kind: 'unknown', label: 'Review findings unavailable' }
+  if (data.checks.some((check) => check.status !== 'completed') || [...statuses.values()].some((state) => ['pending', 'expected'].includes(state))) {
+    const passed = data.checks.filter((check) => check.status === 'completed' && check.conclusion === 'success').length + [...statuses.values()].filter((state) => state === 'success').length
+    return { kind: 'pending', label: `Checks running (${passed}/${data.checks.length + statuses.size})` }
+  }
   if (data.checks.some((check) => !['success', 'neutral', 'skipped'].includes(check.conclusion)) || [...statuses.values()].some((state) => state !== 'success')) return { kind: 'unknown', label: 'Status unavailable' }
   if (p.mergeableState !== 'clean') return { kind: 'blocked', label: 'Ask agent to fix issues' }
   return { kind: 'ready', label: 'Merge pull request' }
@@ -67,7 +126,7 @@ export async function applyGithubAction({ url, action, expectedHead }, { read = 
 }
 
 /** Independent sections can fail without making other information disappear. */
-export async function readPull(url, api = ghApi) {
+export async function readPull(url, api = ghApi, threads = readUnresolvedThreads) {
   const ref = parsePullUrl(url)
   if (!ref) throw new Error('Enter a valid github.com pull request URL.')
   const root = `repos/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.repo)}`
@@ -83,10 +142,10 @@ export async function readPull(url, api = ghApi) {
     checks: `${root}/commits/${pull.head.sha}/check-runs?per_page=100`,
     statuses: `${root}/commits/${pull.head.sha}/status?per_page=100`,
   }
-  const entries = await Promise.all(Object.entries(paths).map(async ([name, path]) => {
+  const [entries, unresolvedThreads] = await Promise.all([Promise.all(Object.entries(paths).map(async ([name, path]) => {
     try { return [name, { data: await api(path), error: false }] }
     catch { return [name, { data: null, error: true }] }
-  }))
+  })), threads(ref).catch(() => null)])
   const parts = Object.fromEntries(entries)
   return {
     ref,
@@ -97,6 +156,7 @@ export async function readPull(url, api = ghApi) {
     files: parts.files.error ? null : (parts.files.data ?? []).map((f) => ({ name: f.filename, status: f.status, additions: f.additions, deletions: f.deletions, patch: f.patch ?? null })),
     checks: parts.checks.error ? null : (parts.checks.data?.check_runs ?? []).map((c) => ({ id: c.id, name: c.name, status: c.status, conclusion: c.conclusion, url: c.html_url || '' })),
     statuses: parts.statuses.error ? null : (parts.statuses.data?.statuses ?? []).map((s) => ({ id: s.id, name: s.context, status: s.state, description: s.description || '', url: s.target_url || '' })),
+    unresolvedThreads,
     limited: [
       ...['reviews', 'comments', 'inline', 'files'].filter((key) => Array.isArray(parts[key].data) && parts[key].data.length === 100),
       ...(parts.checks.data?.total_count > 100 ? ['checks'] : []),

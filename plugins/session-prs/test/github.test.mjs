@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { checkStatus, makeReader, makePullReader, parsePullUrl, parseRemote, pullStatus, readReferencedPulls, reviewStatus } from "../src/github.mjs"
+import { checkStatus, makeReader, makePullReader, parsePullUrl, parseRemote, pullStatus, readPullById, readReferencedPulls, reviewFindings, reviewStatus } from "../src/github.mjs"
 
 test("accepts GitHub remotes and rejects other hosts", () => {
   assert.deepEqual(parseRemote("git@github.com:example-org/example-repo.git"), { owner: "example-org", repo: "example-repo" })
@@ -34,6 +34,62 @@ test("gives each PR its actual state, including conflicts and blocked readiness"
 test("accepts only canonical pull URLs", () => {
   assert.deepEqual(parsePullUrl("https://github.com/org/repo/pull/123"), { owner: "org", repo: "repo", number: 123 })
   for (const value of ["https://github.com.evil/org/repo/pull/123", "https://github.com/org/repo/issues/123", "https://github.com/org/repo/pull/1?token=x", "https://github.com/org/repo/pull/9007199254740992"]) assert.equal(parsePullUrl(value), null)
+})
+
+test("includes the PR title from GitHub details without additional requests", async () => {
+  const paths = []
+  const fetch = async (path) => {
+    paths.push(path)
+    if (path === "repos/org/repo/pulls/123") return { title: "Improve checkout", comments: 1, state: "open", mergeable: true, head: { sha: "abc", ref: "feature" } }
+    if (path.includes("/issues/123/comments?")) return []
+    if (path.includes("/check-runs?")) return { check_runs: [] }
+    if (path.includes("/status?")) return { statuses: [] }
+    throw new Error("Unexpected request")
+  }
+  const pr = await readPullById({ owner: "org", repo: "repo", number: 123 }, undefined, fetch)
+  assert.equal(pr.title, "Improve checkout")
+  assert.equal(pr.repo, "org/repo")
+  assert.equal(pr.number, 123)
+  assert.equal(paths.length, 4)
+})
+
+test("uses the latest bot review marker and flags findings from an old commit", () => {
+  const head = "a".repeat(40)
+  const marker = (sha, count) => `<!-- review-done sha=${sha} findings=${count} -->`
+  const comments = [
+    { user: { login: "github-actions[bot]" }, created_at: "2026-01-02", body: marker(head, 5) },
+    { user: { login: "github-actions[bot]" }, created_at: "2026-01-01", body: marker("b".repeat(40), 2) },
+    { user: { login: "someone" }, created_at: "2026-01-03", body: marker(head, 99) },
+  ]
+  assert.deepEqual(reviewFindings(comments, head), { count: "5", outdated: false })
+  assert.deepEqual(reviewFindings(comments, "b".repeat(40)), { count: "5", outdated: true })
+  assert.equal(reviewFindings([], head), null)
+  assert.equal(reviewFindings(null, head), null)
+  assert.equal(reviewFindings(comments, "invalid"), null)
+  assert.deepEqual(reviewFindings([{ user: { login: "github-actions[bot]" }, body: marker(head, 0) }], head), { count: "0", outdated: false })
+})
+
+test("loads the most recent issue-comment page and tolerates a comments API error", async () => {
+  const head = "a".repeat(40)
+  const paths = []
+  let fail = false
+  const fetch = async (path) => {
+    paths.push(path)
+    if (path === "repos/org/repo/pulls/123") return { comments: 101, state: "open", mergeable: true, head: { sha: head, ref: "feature" } }
+    if (path.includes("/check-runs?")) return { check_runs: [] }
+    if (path.includes("/status?")) return { statuses: [] }
+    if (path.includes("/issues/123/comments?")) {
+      if (fail) throw new Error("Comments unavailable")
+      return [{ user: { login: "github-actions[bot]" }, body: `<!-- review-done sha=${head} findings=3 -->` }]
+    }
+    throw new Error("Unexpected request")
+  }
+  const ref = { owner: "org", repo: "repo", number: 123 }
+  const pr = await readPullById(ref, undefined, fetch)
+  assert.deepEqual(pr.findings, { count: "3", outdated: false })
+  assert.ok(paths.includes("repos/org/repo/issues/123/comments?per_page=100&page=2"))
+  fail = true
+  assert.equal((await readPullById(ref, undefined, fetch)).findings, null)
 })
 
 test("deduplicates PR reads across sessions and limits refresh per PR", async () => {
