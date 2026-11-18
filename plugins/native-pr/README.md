@@ -13,13 +13,26 @@ When merge is offered, **Sanity check** queues a request in the active chat to
 verify current PR state, staleness, checks and review feedback before merging.
 It does not merge, push, modify code, change PR state or resolve threads. The
 agent still follows applicable instructions and permissions for review replies.
+The small caret beside the sanity check or an agent-request action opens a new
+thread draft in the same worktree with the identical instruction prefilled. Review
+and send it there; the caret does not send the message automatically. The main
+buttons continue to queue requests in the current thread.
 
 The viewer is opened by the `github-pr-links` and `session-prs` plugins. If it
 is unavailable, those plugins fall back to their original browser behavior.
+When a PR targets a non-default branch, a compact header follows open parent PRs
+from the current branch to the repository's default branch. Each PR opens in the
+native viewer. The chain is based on branch relationships, not stack membership;
+missing, ambiguous, unavailable, cyclic, or excessively long chains are shown as
+incomplete rather than guessed. Same-repository parents only are followed. It
+adds up to 10 REST lookups on a fresh read and shares the existing cache.
 The viewer keeps recent PR snapshots in window memory across panel switches and
 shows them immediately on return. It rechecks stale snapshots in the background
-on open and on Refresh, never polls, and limits reads with a 60-second backend
-cache. A fresh read makes REST requests and one GraphQL request for review-thread
+on open, never polls, and limits normal reads with a 60-second backend cache.
+Refresh bypasses both caches and fetches the current PR data from GitHub. The
+last good snapshot remains visible if refresh fails. The header shows GitHub's last PR update as a relative age and local date,
+separately from the cache time. Updates include comments and metadata changes,
+not only commits. A fresh read makes REST requests and one GraphQL request for review-thread
 resolution. Completed or failed actions invalidate the snapshot. The Conversation
 count includes issue and inline comments and non-empty review bodies, not empty
 approval events; `?` means unavailable and `+` means a section was capped.

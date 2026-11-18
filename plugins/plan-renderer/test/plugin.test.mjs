@@ -5,7 +5,7 @@ import { runInNewContext } from 'node:vm'
 
 test('registers a scoped plan link handler, command, and side panel', async () => {
   const exports = {}
-  const api = { Plugin: { define: (value) => value }, Panel: Symbol('panel'), Command: Symbol('command'), LinkHandler: Symbol('link') }
+  const api = { Plugin: { define: (value) => value }, Contract: { define: (id) => ({ id }) }, Style: Symbol('style'), Panel: Symbol('panel'), Command: Symbol('command'), LinkHandler: Symbol('link') }
   const modules = {
     '@opencode/plugin/gui': api,
     'solid-js/web': { template: () => () => {}, delegateEvents() {} },
@@ -19,6 +19,7 @@ test('registers a scoped plan link handler, command, and side panel', async () =
   const entries = new Map(), opened = []
   exports.default.setup({
     id: 'plan-renderer',
+    use: (contract) => { assert.equal(contract.id, 'native-pr.open'); return () => ({ status: 'inactive' }) },
     sessions: { current: () => session },
     screen: { current: () => ({ file }) },
     add: (registry, value) => entries.set(registry, value),

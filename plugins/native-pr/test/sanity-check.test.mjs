@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { requestSanityCheck } from '../src/sanity-check.mjs'
+import { requestSanityCheck, sanityCheckPrompt } from '../src/sanity-check.mjs'
 
 test('queues a targeted fresh PR check to the selected session without merging', async () => {
   const requests = [], sha = 'a'.repeat(40)
@@ -17,6 +17,7 @@ test('queues a targeted fresh PR check to the selected session without merging',
   assert.match(requests[0].text, /comments posted after earlier fixes/)
   assert.match(requests[0].text, /Do not merge/)
   assert.match(requests[0].text, /Ready \/ Not ready \/ Unknown/)
+  assert.equal(requests[0].text, sanityCheckPrompt({ url: 'https://github.com/acme/repo/pull/42/files', headSha: sha }))
 })
 
 test('rejects an absent session or invalid PR without sending', async () => {

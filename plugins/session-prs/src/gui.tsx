@@ -5,11 +5,11 @@ import { Browser } from "@opencode/plugin/gui/browser"
 import { makeReader, makePullReader, readPull, readReferencedPulls } from "./github.mjs"
 import { createSessionCache } from "./session-cache.mjs"
 import { combinePulls, statusColor } from "./display.mjs"
-import { backendReadInput } from "./backend-schema.mjs"
+import { backendId, backendReadInput } from "./backend-schema.mjs"
 import { focusSession } from "./navigation.mjs"
 
 const Backend = Ipc.define({
-  id: "session-prs.backend",
+  id: backendId,
   methods: {
     read: { input: backendReadInput, output: Schema.Unknown },
   },

@@ -1,0 +1,31 @@
+.plan-renderer { height:100%; overflow:auto; color:inherit; }
+.plan-renderer .plan-header { position:sticky; top:0; z-index:2; padding:18px 22px 12px; background:var(--background-base, Canvas); border-bottom:1px solid color-mix(in srgb, currentColor 18%, transparent); }
+.plan-renderer .plan-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.plan-renderer .plan-muted { opacity:.7; font-size:12px; line-height:1.6; }
+.plan-renderer progress { display:block; width:100%; height:5px; margin:12px 0; accent-color:var(--text-interactive-base, #718ddd); }
+.plan-renderer .plan-tabs { display:flex; gap:5px; overflow:auto; padding:3px 0; }
+.plan-renderer button, .plan-renderer select, .plan-renderer .plan-task-actions a { font:inherit; font-size:12px; color:inherit; background:transparent; border:1px solid color-mix(in srgb, currentColor 24%, transparent); border-radius:6px; padding:6px 10px; cursor:pointer; white-space:nowrap; }
+.plan-renderer button:disabled { opacity:.45; cursor:not-allowed; }
+.plan-renderer button:focus-visible, .plan-renderer select:focus-visible, .plan-renderer a:focus-visible { outline:2px solid var(--text-interactive-base, #718ddd); outline-offset:2px; }
+.plan-renderer [role=tab][aria-selected=true] { background:color-mix(in srgb, currentColor 12%, transparent); border-color:currentColor; }
+.plan-renderer .plan-body { padding:20px 22px; overflow-wrap:anywhere; }
+.plan-renderer .plan-error { color:var(--text-critical-base, #c54a4a); }
+.plan-renderer .plan-warning { border:1px solid color-mix(in srgb, currentColor 28%, transparent); border-radius:8px; padding:12px; margin-bottom:16px; font-size:12px; }
+.plan-renderer .plan-warning ul { padding-left:20px; }
+.plan-renderer .plan-section-actions { display:flex; justify-content:flex-end; margin-bottom:12px; }
+.plan-renderer .plan-checklist h2 { margin:0; font-size:18px; }
+.plan-renderer .plan-checklist h3 { margin:18px 0 10px; font-size:13px; }
+.plan-renderer .plan-checklist label { display:flex; align-items:center; gap:8px; font-size:12px; }
+.plan-renderer .plan-task { border:1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius:8px; padding:12px; margin:10px 0; }
+.plan-renderer .plan-task-heading { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; font-size:13px; }
+.plan-renderer .plan-task-heading strong { flex:1; min-width:min(180px, 100%); }
+.plan-renderer .plan-task-state { width:16px; text-align:center; }
+.plan-renderer .plan-status { font-size:11px; border:1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius:20px; padding:2px 7px; }
+.plan-renderer .plan-task[data-status=done] .plan-task-state { color:var(--text-success-base, #348461); }
+.plan-renderer .plan-task[data-status=blocked] { border-style:dashed; }
+.plan-renderer .plan-task[data-status=cancelled], .plan-renderer .plan-task[data-status=superseded] { background:color-mix(in srgb, currentColor 3%, transparent); }
+.plan-renderer .plan-task-details { margin:10px 0; font-size:12px; line-height:1.6; }
+.plan-renderer .plan-task-details p { margin:4px 0; }
+.plan-renderer .plan-task-actions { display:flex; gap:6px; flex-wrap:wrap; }
+.plan-renderer .plan-task-actions a { text-decoration:none; }
+@media (max-width:480px) { .plan-renderer .plan-header, .plan-renderer .plan-body { padding-left:12px; padding-right:12px; } }

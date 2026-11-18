@@ -135,6 +135,42 @@ export async function applyGithubAction({ url, action, expectedHead }, { read = 
   }
 }
 
+/** Follow unambiguous open PRs whose head is the preceding PR's base branch. */
+export async function readBaseChain(ref, pull, api = ghApi) {
+  const defaultBranch = pull.base?.repo?.default_branch
+  const base = pull.base?.ref
+  if (!defaultBranch || !base || !pull.head?.ref) return null
+  if (base === defaultBranch) return null
+  const root = `repos/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.repo)}`
+  const repoName = `${ref.owner}/${ref.repo}`.toLowerCase()
+  const chain = [{ branch: pull.head.ref, number: ref.number, url: ref.url }]
+  const seenBranches = new Set([pull.head.ref])
+  const seenNumbers = new Set([ref.number])
+  let next = base
+  for (let depth = 0; depth < 10; depth++) {
+    if (next === defaultBranch) return { chain, target: next, status: 'complete' }
+    if (seenBranches.has(next)) return { chain, target: next, status: 'cycle' }
+    seenBranches.add(next)
+    let matches
+    try {
+      const head = encodeURIComponent(`${ref.owner}:${next}`)
+      const result = await api(`${root}/pulls?state=open&head=${head}&per_page=100`)
+      if (!Array.isArray(result) || result.length === 100) return { chain, target: next, status: 'unavailable' }
+      matches = result.filter((candidate) => candidate.head?.ref === next && candidate.head?.repo?.full_name?.toLowerCase() === repoName && candidate.base?.repo?.full_name?.toLowerCase() === repoName && Number.isSafeInteger(candidate.number) && candidate.number > 0 && candidate.base?.ref)
+    } catch { return { chain, target: next, status: 'unavailable' } }
+    if (!matches.length) return { chain, target: next, status: 'missing' }
+    if (matches.length !== 1) return { chain, target: next, status: 'ambiguous' }
+    const parent = matches[0]
+    if (seenNumbers.has(parent.number)) return { chain, target: next, status: 'cycle' }
+    const parentRef = parsePullUrl(`https://github.com/${ref.owner}/${ref.repo}/pull/${parent.number}`)
+    if (!parentRef) return { chain, target: next, status: 'unavailable' }
+    seenNumbers.add(parent.number)
+    chain.push({ branch: next, number: parent.number, url: parentRef.url })
+    next = parent.base.ref
+  }
+  return { chain, target: next, status: next === defaultBranch ? 'complete' : 'limit' }
+}
+
 /** Independent sections can fail without making other information disappear. */
 export async function readPull(url, api = ghApi, threads = readUnresolvedThreads) {
   const ref = parsePullUrl(url)
@@ -152,13 +188,14 @@ export async function readPull(url, api = ghApi, threads = readUnresolvedThreads
     checks: `${root}/commits/${pull.head.sha}/check-runs?per_page=100`,
     statuses: `${root}/commits/${pull.head.sha}/status?per_page=100`,
   }
-  const [entries, unresolvedThreads] = await Promise.all([Promise.all(Object.entries(paths).map(async ([name, path]) => {
+  const [entries, unresolvedThreads, baseChain] = await Promise.all([Promise.all(Object.entries(paths).map(async ([name, path]) => {
     try { return [name, { data: await api(path), error: false }] }
     catch { return [name, { data: null, error: true }] }
-  })), threads(ref).catch(() => null)])
+  })), threads(ref).catch(() => null), readBaseChain(ref, pull, api)])
   const parts = Object.fromEntries(entries)
   return {
     ref,
+    baseChain,
     pull: { title: pull.title, body: pull.body || '', state: pull.merged_at ? 'Merged' : pull.state === 'closed' ? 'Closed' : pull.draft ? 'Draft' : 'Open', author: pull.user?.login || 'Unknown', base: pull.base?.ref || '', head: pull.head?.ref || '', sha: pull.head.sha, mergeable: pull.mergeable ?? null, mergeableState: pull.mergeable_state || 'unknown', additions: pull.additions ?? 0, deletions: pull.deletions ?? 0, changedFiles: pull.changed_files ?? 0, updatedAt: pull.updated_at || '', url: ref.url },
     reviews: parts.reviews.error ? null : (parts.reviews.data ?? []).map((r) => ({ id: r.id, author: r.user?.login || 'Unknown', state: r.state, body: r.body || '', date: r.submitted_at || '' })),
     comments: parts.comments.error ? null : (parts.comments.data ?? []).map((c) => ({ id: c.id, author: c.user?.login || 'Unknown', body: c.body || '', date: c.created_at || '' })),
@@ -178,12 +215,12 @@ export async function readPull(url, api = ghApi, threads = readUnresolvedThreads
 /** Cache only successful reads, share concurrent requests, and never poll. */
 export function makeReader({ read = readPull, now = Date.now } = {}) {
   const cache = new Map()
-  const reader = async (url) => {
+  const reader = async (url, { force = false } = {}) => {
     const ref = parsePullUrl(url)
     if (!ref) throw new Error('Enter a valid github.com pull request URL.')
     const key = ref.url.toLowerCase()
     const old = cache.get(key)
-    if (old && now() - old.time < ttl) return { data: await old.promise, cached: true, checkedAt: old.time }
+    if (!force && old && now() - old.time < ttl) return { data: await old.promise, cached: true, checkedAt: old.time }
     const entry = { time: now(), promise: null }
     entry.promise = read(ref.url).catch((error) => { if (cache.get(key) === entry) cache.delete(key); throw error })
     cache.set(key, entry)

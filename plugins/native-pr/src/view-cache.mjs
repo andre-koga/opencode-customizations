@@ -15,12 +15,12 @@ export function createViewCache({ read, now = Date.now, ttl = 60_000, limit = 50
       snapshots.delete(key); snapshots.set(key, value)
       return { ...value, cached: true, fresh: now() - value.checkedAt < ttl }
     },
-    load(url) {
+    load(url, { force = false } = {}) {
       const key = keyFor(url)
       const existing = inflight.get(key)
-      if (existing) return existing.promise
+      if (existing && !force) return existing.promise
       const entry = {}
-      entry.promise = Promise.resolve().then(() => read(url)).then((result) => {
+      entry.promise = Promise.resolve().then(() => read(url, { force })).then((result) => {
         if (inflight.get(key) === entry) {
           snapshots.delete(key); snapshots.set(key, result)
           while (snapshots.size > limit) snapshots.delete(snapshots.keys().next().value)

@@ -73,9 +73,11 @@ test('window and main register the same versioned IPC with read and action metho
     log: { write() {} },
   })
   assert.equal(clientSpec, providerSpec)
-  assert.equal(clientSpec.id, 'native-pr.backend-v2')
-  assert.deepEqual(Object.keys(clientSpec.methods).sort(), ['action', 'read'])
+  assert.equal(clientSpec.id, 'native-pr.backend-v3')
+  assert.deepEqual(Object.keys(clientSpec.methods).sort(), ['action', 'read', 'refresh'])
   assert.equal(typeof implementation.read, 'function')
+  assert.equal(typeof implementation.refresh, 'function')
   assert.equal(typeof implementation.action, 'function')
   await assert.rejects(implementation.action({ url: 'invalid', action: 'ready', expectedHead: 'a'.repeat(40) }), /Invalid pull request/)
+  await assert.rejects(implementation.refresh('invalid'), /valid github.com/)
 })

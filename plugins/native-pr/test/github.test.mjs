@@ -1,13 +1,13 @@
 import { test } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { applyGithubAction, conversationCount, findingsSummary, makeReader, parsePullUrl, primaryAction, readPull, readUnresolvedThreads } from '../src/github.mjs'
+import { applyGithubAction, conversationCount, findingsSummary, makeReader, parsePullUrl, primaryAction, readBaseChain, readPull, readUnresolvedThreads } from '../src/github.mjs'
 
 test('accepts only genuine GitHub PR URLs and canonicalizes paths and fragments', () => {
   assert.deepEqual(parsePullUrl('https://github.com/acme/widget/pull/42/files#diff-1'), { owner: 'acme', repo: 'widget', number: 42, url: 'https://github.com/acme/widget/pull/42' })
   for (const url of ['https://github.com.evil.test/a/b/pull/1', 'https://user@github.com/a/b/pull/1', 'http://github.com/a/b/pull/1', 'https://github.com/a/b/issues/1', 'https://github.com/a/b/pull/0', 'https://github.com/a/b/pull/1;rm', 'file:///tmp/a', 'not-a-url']) assert.equal(parsePullUrl(url), null, url)
 })
 
-const pull = { title: 'Example', body: 'Body', state: 'open', draft: false, user: { login: 'author' }, head: { sha: 'a'.repeat(40), ref: 'feature' }, base: { ref: 'dev' }, changed_files: 1 }
+const pull = { title: 'Example', body: 'Body', state: 'open', draft: false, user: { login: 'author' }, head: { sha: 'a'.repeat(40), ref: 'feature' }, base: { ref: 'dev' }, changed_files: 1, updated_at: '2026-11-10T18:00:00Z' }
 
 test('loads details, checks, reviews, discussion and patches using REST paths', async () => {
   const paths = []
@@ -25,6 +25,7 @@ test('loads details, checks, reviews, discussion and patches using REST paths', 
   const result = await readPull('https://github.com/acme/widget/pull/42', api, async () => true)
   assert.equal(paths.length, 7)
   assert.equal(result.pull.title, 'Example')
+  assert.equal(result.pull.updatedAt, '2026-11-10T18:00:00Z')
   assert.equal(result.reviews[0].state, 'APPROVED')
   assert.equal(result.comments[0].body, 'hello')
   assert.equal(result.inline[0].path, 'file.ts')
@@ -45,6 +46,68 @@ test('reports failed sections instead of hiding available data', async () => {
   assert.equal(result.reviews, null)
   assert.deepEqual(result.comments, [])
   assert.equal(result.unresolvedThreads, null)
+})
+
+const chainRef = parsePullUrl('https://github.com/acme/widget/pull/42')
+const chainPull = (head, base, defaultBranch = 'dev') => ({ head: { ref: head }, base: { ref: base, repo: { full_name: 'acme/widget', default_branch: defaultBranch } } })
+const parentPull = (number, head, base, repo = 'acme/widget') => ({ number, head: { ref: head, repo: { full_name: repo } }, base: { ref: base, repo: { full_name: 'acme/widget' } } })
+
+test('follows the base-branch chain to the actual default branch, with canonical PR links', async () => {
+  const paths = []
+  const api = async (path) => {
+    paths.push(path)
+    if (path.includes('head=acme%3Amiddle%2Fbranch')) return [parentPull(41, 'middle/branch', 'bottom')]
+    if (path.includes('head=acme%3Abottom')) return [parentPull(40, 'bottom', 'dev')]
+    throw Error('unexpected path')
+  }
+  const chain = await readBaseChain(chainRef, chainPull('top', 'middle/branch'), api)
+  assert.deepEqual(chain, { chain: [
+    { branch: 'top', number: 42, url: 'https://github.com/acme/widget/pull/42' },
+    { branch: 'middle/branch', number: 41, url: 'https://github.com/acme/widget/pull/41' },
+    { branch: 'bottom', number: 40, url: 'https://github.com/acme/widget/pull/40' },
+  ], target: 'dev', status: 'complete' })
+  assert.equal(paths.length, 2)
+  assert.equal(await readBaseChain(chainRef, chainPull('feature', 'dev'), api), null)
+  assert.equal(await readBaseChain(chainRef, { head: { ref: 'feature' }, base: { ref: 'dev' } }, api), null)
+})
+
+test('never invents parents for missing, ambiguous, forked, failed, or cyclic chains', async () => {
+  const start = chainPull('top', 'parent')
+  const result = async (api) => readBaseChain(chainRef, start, api)
+  assert.equal((await result(async () => [])).status, 'missing')
+  assert.equal((await result(async () => [parentPull(1, 'parent', 'dev'), parentPull(2, 'parent', 'dev')])).status, 'ambiguous')
+  assert.equal((await result(async () => [parentPull(1, 'parent', 'dev', 'other/widget')])).status, 'missing')
+  assert.equal((await result(async () => { throw Error('offline') })).status, 'unavailable')
+  assert.equal((await result(async () => Array(100).fill(parentPull(1, 'parent', 'dev')))).status, 'unavailable')
+  const cycle = await result(async () => [parentPull(1, 'parent', 'top')])
+  assert.equal(cycle.status, 'cycle')
+  assert.equal(cycle.target, 'top')
+  assert.equal(cycle.chain.length, 2)
+})
+
+test('bounds chain lookups and returns the partial chain', async () => {
+  let count = 0
+  const result = await readBaseChain(chainRef, chainPull('top', 'layer0'), async () => {
+    const index = count++
+    return [parentPull(index + 1, `layer${index}`, `layer${index + 1}`)]
+  })
+  assert.equal(count, 10)
+  assert.equal(result.status, 'limit')
+  assert.equal(result.target, 'layer10')
+  assert.equal(result.chain.length, 11)
+})
+
+test('chain lookup failure does not prevent loading the PR', async () => {
+  const api = async (path) => {
+    if (/\/pulls\/42$/.test(path)) return { ...pull, ...chainPull('top', 'parent'), head: { ...pull.head, ref: 'top' } }
+    if (path.includes('/pulls?')) throw Error('offline')
+    if (path.includes('/check-runs?')) return { check_runs: [] }
+    if (path.includes('/status?')) return { statuses: [] }
+    return []
+  }
+  const result = await readPull(chainRef.url, api, async () => false)
+  assert.equal(result.pull.title, 'Example')
+  assert.equal(result.baseChain.status, 'unavailable')
 })
 
 test('reads review thread resolution conservatively, including partial pages', async () => {
@@ -104,6 +167,22 @@ test('shares requests, rate limits refreshes, and retries after failure', async 
   time = 120_000
   await assert.rejects(reader(url))
   assert.equal((await reader(url)).data.call, 4)
+})
+
+test('forced reads bypass the backend cache and cannot be overwritten by older requests', async () => {
+  let finishOld, count = 0
+  const old = new Promise((resolve) => { finishOld = resolve })
+  const reader = makeReader({ now: () => 100, read: async () => ++count === 1 ? old : { version: count } })
+  const first = reader(chainRef.url)
+  const forced = await reader(chainRef.url, { force: true })
+  assert.equal(forced.cached, false)
+  assert.equal(forced.data.version, 2)
+  finishOld({ version: 1 })
+  assert.equal((await first).data.version, 1)
+  const cached = await reader(chainRef.url)
+  assert.equal(cached.cached, true)
+  assert.equal(cached.data.version, 2)
+  assert.equal(count, 2)
 })
 
 const ready = () => ({
