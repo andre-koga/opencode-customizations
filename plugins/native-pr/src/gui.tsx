@@ -4,6 +4,7 @@ import { Contract, Ipc, Panel, Plugin } from '@opencode/plugin/gui'
 import { applyGithubAction, conversationCount, findingsSummary, makeReader, parsePullUrl, primaryAction } from './github.mjs'
 import { confirmPrimaryAction } from './confirmation.mjs'
 import { createViewCache } from './view-cache.mjs'
+import { requestSanityCheck } from './sanity-check.mjs'
 
 const Navigation = Contract.define('native-pr.open')
 const Backend = Ipc.define({
@@ -56,6 +57,7 @@ export default Plugin.define({
       const [view, setView] = createSignal('Overview')
       const [stamp, setStamp] = createSignal('')
       const [actionBusy, setActionBusy] = createSignal(false)
+      const [sanityBusy, setSanityBusy] = createSignal(false)
       const [notice, setNotice] = createSignal('')
       let generation = 0
       let disposed = false
@@ -87,7 +89,7 @@ export default Plugin.define({
       onCleanup(() => { disposed = true; generation++ })
       const runPrimary = async () => {
         const current = data()
-        if (!current || actionBusy()) return
+        if (!current || actionBusy() || sanityBusy()) return
         const action = primaryAction(current)
         const state = action.kind
         const target = current.ref.url
@@ -115,6 +117,18 @@ export default Plugin.define({
           if (!disposed && url() === target) setError(err instanceof Error ? err.message : String(err))
         } finally { if (!disposed) setActionBusy(false) }
       }
+      const runSanityCheck = async () => {
+        const current = data()
+        if (!current || busy() || actionBusy() || sanityBusy() || primaryAction(current).kind !== 'ready') return
+        const target = current.ref.url
+        setSanityBusy(true); setError(''); setNotice('')
+        try {
+          await requestSanityCheck(ctx.sessions.current(), { url: target, headSha: current.pull.sha })
+          if (!disposed && url() === target) setNotice('Sanity check requested in the active thread.')
+        } catch (err) {
+          if (!disposed && url() === target) setError(err instanceof Error ? err.message : String(err))
+        } finally { if (!disposed) setSanityBusy(false) }
+      }
       const conversation = () => {
         const d = data()
         if (!d) return []
@@ -136,10 +150,13 @@ export default Plugin.define({
           </div>
           <div style={{ color: colors.muted, 'font-size': '11px', 'margin-top': '5px' }}>{stamp()} · refresh uses a 60-second cache</div>
           <div style={{ 'margin-top': '14px', display: 'flex', 'align-items': 'center', gap: '10px', 'flex-wrap': 'wrap' }}>
-            <button type="button" disabled={busy() || actionBusy() || ['closed', 'pending', 'unknown'].includes(primaryAction(d()).kind)}
+            <button type="button" disabled={busy() || actionBusy() || sanityBusy() || ['closed', 'pending', 'unknown'].includes(primaryAction(d()).kind)}
               style={{ ...button, 'font-weight': 600, color: '#fff', background: ({ draft: '#636b74', conflict: '#946b06', blocked: '#ab3535', ready: '#238636', pending: '#555', unknown: '#555', closed: '#555' } as Record<string, string>)[primaryAction(d()).kind], opacity: busy() || actionBusy() ? 0.65 : 1 }}
               onClick={() => void runPrimary()}>{actionBusy() ? 'Working…' : primaryAction(d()).label}</button>
-            <Show when={primaryAction(d()).kind === 'ready'}><span style={{ color: colors.muted }}>Merge commit · confirmation required</span></Show>
+            <Show when={primaryAction(d()).kind === 'ready'}>
+              <button type="button" style={button} disabled={busy() || actionBusy() || sanityBusy()} onClick={() => void runSanityCheck()}>{sanityBusy() ? 'Sending…' : 'Sanity check'}</button>
+              <span style={{ color: colors.muted }}>Merge commit · confirmation required</span>
+            </Show>
             <Show when={primaryAction(d()).kind === 'unknown'}><span style={{ color: colors.muted }}>Refresh when GitHub has finished calculating status.</span></Show>
           </div>
           <div style={{ display: 'flex', gap: '5px', 'border-bottom': `1px solid ${colors.border}`, 'margin': '16px 0 12px', 'padding-bottom': '8px', 'flex-wrap': 'wrap' }}>

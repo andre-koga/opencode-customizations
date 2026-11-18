@@ -9,6 +9,10 @@ or blockers. Merging requires confirmation; marking a draft ready does not. Both
 actions re-read current status and require the head commit to match. Marking ready
 can notify reviewers and start review automation. GitHub enforces branch rules and permissions.
 The panel does not post comments, approve reviews, bypass rules, or delete branches.
+When merge is offered, **Sanity check** queues a request in the active chat to
+verify current PR state, staleness, checks and review feedback before merging.
+It does not merge, push, modify code, change PR state or resolve threads. The
+agent still follows applicable instructions and permissions for review replies.
 
 The viewer is opened by the `github-pr-links` and `session-prs` plugins. If it
 is unavailable, those plugins fall back to their original browser behavior.
