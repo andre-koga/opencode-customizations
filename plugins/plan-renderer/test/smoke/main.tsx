@@ -19,6 +19,7 @@ const screen = {
 const entries = new Map()
 plugin.setup({
   id: 'plan-renderer',
+  appearance: { mode: () => 'dark' },
   use: () => () => ({ status: 'active', value: { open: (s: any, url: string) => { calls.native.push({ session: s.id, url }); return true } } }),
   add: (kind: any, value: any) => {
     if (kind === Style) { const style = document.createElement('style'); style.textContent = value; document.head.append(style) }

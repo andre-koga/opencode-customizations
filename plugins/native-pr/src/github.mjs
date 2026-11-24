@@ -72,12 +72,8 @@ export function findingsSummary(data) {
   return { label: findings.count, detail: 'Findings reported by the latest completed bot review for this commit.' }
 }
 
-/** Conservative state: never offer merging while GitHub's answer is incomplete. */
-export function primaryAction(data) {
-  const p = data?.pull
-  if (!p || p.state === 'Merged' || p.state === 'Closed') return { kind: 'closed', label: p?.state || 'Unavailable' }
-  if (p.state === 'Draft') return { kind: 'draft', label: 'Mark ready for review' }
-  if (p.mergeable === false || p.mergeableState === 'dirty') return { kind: 'conflict', label: 'Ask agent to fix conflicts' }
+/** Known review and CI problems are actionable even on draft or conflicting PRs. */
+function blockerAction(data) {
   // Combined statuses are newest first; an old failed run is not the current status.
   const statuses = new Map()
   for (const status of data.statuses ?? []) if (!statuses.has(status.name)) statuses.set(status.name, status.status)
@@ -99,6 +95,21 @@ export function primaryAction(data) {
     const items = [failed && 'fix CI/CD failures', comments && 'address unresolved review comments', hasFindings && `address ${findings.count} current bot review findings`, feedback && 'address requested review changes'].filter(Boolean)
     return { kind: 'blocked', label, task: `Investigate and ${items.join(' and ')} for` }
   }
+  return null
+}
+
+/** Conservative state: never offer merging while GitHub's answer is incomplete. */
+export function primaryAction(data) {
+  const p = data?.pull
+  if (!p || p.state === 'Merged' || p.state === 'Closed') return { kind: 'closed', label: p?.state || 'Unavailable' }
+  if (p.state === 'Draft') return { kind: 'draft', label: 'Mark ready for review' }
+  if (p.mergeable === false || p.mergeableState === 'dirty') return { kind: 'conflict', label: 'Ask agent to fix conflicts' }
+  const blocker = blockerAction(data)
+  if (blocker) return blocker
+  const findings = reviewFindings(data)
+  // Combined statuses are newest first; an old failed run is not the current status.
+  const statuses = new Map()
+  for (const status of data.statuses ?? []) if (!statuses.has(status.name)) statuses.set(status.name, status.status)
   if (p.mergeable !== true || !p.mergeableState || p.mergeableState === 'unknown') return { kind: 'unknown', label: 'Checking mergeability' }
   if (data.checks === null || data.statuses === null || data.reviews === null || data.limited.some((x) => ['checks', 'statuses', 'reviews'].includes(x))) return { kind: 'unknown', label: 'Status unavailable' }
   if (data.unresolvedThreads !== false) return { kind: 'unknown', label: 'Review thread status unavailable' }
@@ -110,6 +121,20 @@ export function primaryAction(data) {
   if (data.checks.some((check) => !['success', 'neutral', 'skipped'].includes(check.conclusion)) || [...statuses.values()].some((state) => state !== 'success')) return { kind: 'unknown', label: 'Status unavailable' }
   if (p.mergeableState !== 'clean') return { kind: 'blocked', label: 'Ask agent to fix issues' }
   return { kind: 'ready', label: 'Merge pull request' }
+}
+
+/** List independent actions without relaxing the primary merge eligibility check. */
+export function availableActions(data) {
+  const primary = primaryAction(data)
+  const actions = [primary]
+  if (primary.kind === 'draft' && (data.pull.mergeable === false || data.pull.mergeableState === 'dirty')) {
+    actions.push({ kind: 'conflict', label: 'Ask agent to fix conflicts' })
+  }
+  if (primary.kind === 'draft' || primary.kind === 'conflict') {
+    const blocker = blockerAction(data)
+    if (blocker) actions.push(blocker)
+  }
+  return actions
 }
 
 /** Run only after the person explicitly confirms the action in the UI. */

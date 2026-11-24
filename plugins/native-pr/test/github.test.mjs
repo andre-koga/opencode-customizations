@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import { strict as assert } from 'node:assert'
-import { applyGithubAction, conversationCount, findingsSummary, makeReader, parsePullUrl, primaryAction, readBaseChain, readPull, readUnresolvedThreads } from '../src/github.mjs'
+import { applyGithubAction, availableActions, conversationCount, findingsSummary, makeReader, parsePullUrl, primaryAction, readBaseChain, readPull, readUnresolvedThreads } from '../src/github.mjs'
 
 test('accepts only genuine GitHub PR URLs and canonicalizes paths and fragments', () => {
   assert.deepEqual(parsePullUrl('https://github.com/acme/widget/pull/42/files#diff-1'), { owner: 'acme', repo: 'widget', number: 42, url: 'https://github.com/acme/widget/pull/42' })
@@ -189,6 +189,34 @@ const ready = () => ({
   pull: { state: 'Open', sha: 'a'.repeat(40), mergeable: true, mergeableState: 'clean' },
   checks: [{ name: 'build', status: 'completed', conclusion: 'success' }],
   statuses: [], reviews: [], comments: [], unresolvedThreads: false, limited: [],
+})
+
+test('offers draft, conflicts, and review or CI actions independently', () => {
+  const d = ready()
+  const failed = [{ status: 'completed', conclusion: 'failure' }]
+  const draft = { ...d, pull: { ...d.pull, state: 'Draft' } }
+  assert.deepEqual(availableActions(draft).map((a) => a.kind), ['draft'])
+  const problems = { ...draft, checks: failed, unresolvedThreads: true }
+  const actions = availableActions(problems)
+  assert.deepEqual(actions.map((a) => a.kind), ['draft', 'blocked'])
+  assert.match(actions[1].task, /CI\/CD.*unresolved review comments/)
+  const conflict = { ...problems, pull: { ...draft.pull, mergeable: false } }
+  assert.deepEqual(availableActions(conflict).map((a) => a.kind), ['draft', 'conflict', 'blocked'])
+  assert.deepEqual(availableActions({ ...conflict, pull: { ...conflict.pull, state: 'Open' } }).map((a) => a.kind), ['conflict', 'blocked'])
+  assert.deepEqual(availableActions({ ...conflict, pull: { ...conflict.pull, state: 'Closed' } }).map((a) => a.kind), ['closed'])
+  assert.deepEqual(availableActions({ ...d, checks: failed }).map((a) => a.kind), ['blocked'])
+  assert.deepEqual(availableActions(d).map((a) => a.kind), ['ready'])
+})
+
+test('independent actions respect partial data and current review findings', () => {
+  const d = ready()
+  const draft = { ...d, pull: { ...d.pull, state: 'Draft' }, checks: null, unresolvedThreads: null }
+  assert.deepEqual(availableActions(draft).map((a) => a.kind), ['draft'])
+  const withFindings = { ...draft, comments: [{ author: 'github-actions[bot]', body: `<!-- review-done sha=${d.pull.sha} open=2 -->` }] }
+  assert.equal(availableActions(withFindings)[1].label, 'Ask agent to fix review findings (2)')
+  assert.deepEqual(availableActions({ ...withFindings, limited: ['comments'] }).map((a) => a.kind), ['draft'])
+  const feedback = { ...draft, reviews: [{ author: 'reviewer', state: 'CHANGES_REQUESTED' }] }
+  assert.equal(availableActions(feedback)[1].label, 'Ask agent to address review feedback')
 })
 
 test('latest open marker supersedes old findings without masking independent merge blockers', () => {

@@ -1,8 +1,9 @@
 import { Schema } from 'effect'
 import { createSignal, onCleanup, onMount, Show } from 'solid-js'
-import { Command, Ipc, MenuItem, Panel, Plugin } from '@opencode/plugin/gui'
+import { Command, Ipc, MenuItem, Panel, Plugin, Style } from '@opencode/plugin/gui'
 import { WebContentsView, session } from 'electron'
 import { allowedUrl } from './url-policy.mjs'
+import theme from '../../shared-ui/theme.css?inline'
 
 const Backend = Ipc.define({
   id: 'persistent-github.browser',
@@ -21,6 +22,7 @@ const Backend = Ipc.define({
 
 export default Plugin.define({
   setup(ctx) {
+    ctx.add(Style, theme)
     const backend = ctx.main(Backend)
     const tab = { id: 'main', title: 'Persistent GitHub', closable: 'compact' as const }
     const open = () => {
@@ -65,22 +67,21 @@ export default Plugin.define({
         void backend.close(key).catch(() => {})
       })
 
-      const buttonStyle = { cursor: 'pointer', padding: '4px 8px', border: '1px solid #8887', 'border-radius': '4px' }
-      return <div style={{ height: '100%', display: 'flex', 'flex-direction': 'column', gap: '6px', padding: '8px' }}>
+      return <div class="oc-panel" data-theme={ctx.appearance.mode()} style={{ display: 'flex', 'flex-direction': 'column', gap: '10px', padding: '12px' }}>
         <div style={{ display: 'flex', gap: '5px', 'align-items': 'center' }}>
-          <button type="button" aria-label="Back" style={buttonStyle} onClick={() => run(backend.back(key))}>←</button>
-          <button type="button" aria-label="Forward" style={buttonStyle} onClick={() => run(backend.forward(key))}>→</button>
-          <button type="button" aria-label="Reload" style={buttonStyle} onClick={() => run(backend.reload(key))}>↻</button>
+          <button type="button" class="oc-button" aria-label="Back" onClick={() => run(backend.back(key))}>←</button>
+          <button type="button" class="oc-button" aria-label="Forward" onClick={() => run(backend.forward(key))}>→</button>
+          <button type="button" class="oc-button" aria-label="Refresh" onClick={() => run(backend.reload(key))}>↻</button>
           <form style={{ display: 'flex', flex: 1, gap: '4px', 'min-width': 0 }} onSubmit={(event) => {
             event.preventDefault()
             setMessage('')
             run(backend.navigate({ key, url: url() }))
           }}>
-            <input aria-label="GitHub URL" value={url()} onInput={(event) => setUrl(event.currentTarget.value)} style={{ flex: 1, 'min-width': 0, padding: '4px', border: '1px solid #8887', 'border-radius': '4px', background: 'transparent' }} />
-            <button type="submit" style={buttonStyle}>Go</button>
+            <input class="oc-input" aria-label="GitHub URL" value={url()} onInput={(event) => setUrl(event.currentTarget.value)} style={{ flex: 1, 'min-width': 0 }} />
+            <button type="submit" class="oc-button">Go</button>
           </form>
         </div>
-        <Show when={message()}><div role="alert" style={{ color: '#d04444', 'font-size': '12px' }}>{message()}</div></Show>
+        <Show when={message()}><div role="alert" class="oc-alert" data-tone="critical">{message()}</div></Show>
         <Show when={loading()}><div>Loading browser…</div></Show>
         <div style={{ flex: 1, 'min-height': 0 }}><ctx.embeds.View id={embed()} visible radius={4} class="h-full w-full" /></div>
       </div>

@@ -1,10 +1,12 @@
 import { Schema } from "effect"
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
-import { Command, Contract, Ipc, MenuItem, Panel, Plugin } from "@opencode/plugin/gui"
+import { Command, Contract, Ipc, MenuItem, Panel, Plugin, Style } from "@opencode/plugin/gui"
 import { Browser } from "@opencode/plugin/gui/browser"
 import { makeReader, makePullReader, readPull, readReferencedPulls } from "./github.mjs"
 import { createSessionCache } from "./session-cache.mjs"
-import { combinePulls, statusColor } from "./display.mjs"
+import { combinePulls, visiblePulls } from "./display.mjs"
+import { findingsStatus, statusLabel, statusTone } from '../../shared-ui/status.mjs'
+import theme from '../../shared-ui/theme.css?inline'
 import { backendId, backendReadInput } from "./backend-schema.mjs"
 import { focusSession } from "./navigation.mjs"
 
@@ -18,6 +20,7 @@ const NativePR = Contract.define("native-pr.open")
 
 export default Plugin.define({
   setup(ctx) {
+    ctx.add(Style, theme)
     console.info("[session-prs] window setup")
     const backend = ctx.main(Backend)
     const browser = ctx.use(Browser)
@@ -26,6 +29,7 @@ export default Plugin.define({
     const [rows, setRows] = createSignal<any[]>([])
     const [message, setMessage] = createSignal("Loading sessions…")
     const [lastRefresh, setLastRefresh] = createSignal("")
+    const [hideMerged, setHideMerged] = createSignal(false)
     const cache = createSessionCache({
       getRefs: () => ctx.sessions.list(),
       read: (input: any) => backend.read(input),
@@ -65,43 +69,47 @@ export default Plugin.define({
         else ctx.system.openExternal(url)
       }
 
-      const cell = { padding: "8px 7px", "border-bottom": "1px solid #8883", "vertical-align": "top" }
+      const cell = {}
       const ellipsis = { overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }
       function Status(props: { value: any }) {
-        return <span style={{ color: statusColor(String(props.value ?? "")), "font-weight": "500" }}>{props.value ?? "—"}</span>
+        return <span class="oc-badge" data-tone={statusTone(props.value)}>{statusLabel(props.value)}</span>
       }
       function SessionCell(props: { row: any, span: number }) {
         return <td rowSpan={props.span} style={{ ...cell, width: "200px", "max-width": "200px" }}>
-          <button type="button" title={`Open chat: ${props.row.title}`} onClick={() => focusSession(ctx.sessions, ctx.tabs, props.row.key)} style={{ display: "block", width: "100%", cursor: "pointer", "text-align": "left" }}>
-            <span style={{ ...ellipsis, display: "block", "text-decoration": "underline" }}>{props.row.title}</span>
-            <small title={props.row.result?.branch || props.row.directory || "Location unavailable"} style={{ ...ellipsis, display: "block", opacity: 0.65 }}>{props.row.result?.branch || props.row.directory || "Location unavailable"}</small>
+          <button type="button" class="oc-link" title={`Open thread: ${props.row.title}`} onClick={() => focusSession(ctx.sessions, ctx.tabs, props.row.key)}>
+            <span class="oc-link-title" style={ellipsis}>{props.row.title}</span>
+            <span class="oc-link-meta" title={props.row.result?.branch || props.row.directory || "Location unavailable"} style={ellipsis}>{props.row.result?.branch || props.row.directory || "Location unavailable"}</span>
           </button>
-          <Show when={props.row.result?.historyTruncated || props.row.result?.historyUnavailable || props.row.result?.historyIncomplete}><small style={{ opacity: 0.7 }}>{props.row.result?.historyUnavailable ? "Chat history unavailable" : props.row.result?.historyIncomplete ? "Chat history partially loaded" : "History limit reached"}</small></Show>
+          <Show when={props.row.result?.historyTruncated || props.row.result?.historyUnavailable || props.row.result?.historyIncomplete}><small class="oc-muted">{props.row.result?.historyUnavailable ? "Thread history unavailable" : props.row.result?.historyIncomplete ? "Thread history partially loaded" : "History limit reached"}</small></Show>
         </td>
       }
-      return <div style={{ padding: "16px", overflow: "auto", height: "100%", "font-size": "13px" }}>
-        <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", gap: "12px", "margin-bottom": "8px" }}>
-          <div><strong>Orchestrator</strong><div style={{ opacity: 0.7, "font-size": "12px" }}>Open chats in this window</div></div>
-          <button type="button" onClick={() => void cache.sync(ctx.sessions.list(), true)} style={{ cursor: "pointer", padding: "4px 8px", border: "1px solid currentColor", "border-radius": "5px" }}>Refresh</button>
+      return <div class="oc-panel" data-theme={ctx.appearance.mode()}>
+        <div class="oc-toolbar">
+          <div><h2 class="oc-title">Orchestrator</h2><div class="oc-meta" style={{ margin: '4px 0 0' }}>Open threads in this window</div></div>
+          <div class="oc-actions">
+            <button type="button" class="oc-tab" aria-pressed={hideMerged()} onClick={() => setHideMerged(!hideMerged())}>Hide merged</button>
+            <button type="button" class="oc-button" onClick={() => void cache.sync(ctx.sessions.list(), true)}>Refresh</button>
+          </div>
         </div>
-        <p style={{ opacity: 0.7, "font-size": "12px", "margin-bottom": "12px" }}>Shows the current branch and PRs linked in each chat. GitHub refreshes on completion or manually, at most once per minute. {lastRefresh()}</p>
-        <Show when={!message()} fallback={<p>{message()}</p>}>
-          <table style={{ width: "100%", "min-width": "850px", "table-layout": "fixed", "border-collapse": "collapse", "text-align": "left" }}>
-            <colgroup><col style={{ width: "200px" }} /><col style={{ width: "385px" }} /><col style={{ width: "110px" }} /><col style={{ width: "85px" }} /><col style={{ width: "90px" }} /></colgroup>
-            <thead><tr><For each={["Chat / branch", "Pull request", "Status", "CI", "Findings"]}>{(label) => <th style={{ padding: "7px", "border-bottom": "1px solid", opacity: 0.75, "white-space": "nowrap" }}>{label}</th>}</For></tr></thead>
-            <tbody><For each={rows()}>{(row) => <Show when={row.result?.prs?.length} fallback={<tr><SessionCell row={row} span={1} /><td colSpan={4} style={cell}><span style={{ opacity: 0.7 }}>{row.result?.note || "Loading…"}</span></td></tr>}>
-              <For each={row.result.prs}>{(pr: any, index) => <tr>
-                <Show when={index() === 0}><SessionCell row={row} span={row.result.prs.length} /></Show>
-                <td style={cell}><button type="button" title={`#${pr.number} ${pr.repo}: ${pr.title || "Title unavailable"}`} onClick={() => open(pr.url)} style={{ display: "flex", width: "100%", gap: "5px", "align-items": "baseline", cursor: "pointer", "text-align": "left" }}>
-                  <strong style={{ "flex-shrink": 0 }}>#{pr.number}</strong>
-                  <small style={{ ...ellipsis, "flex-shrink": 0, "max-width": "90px", opacity: 0.65, "font-size": "10px" }}>{pr.repo.split("/").pop()}</small>
-                  <span style={{ ...ellipsis, "min-width": 0, "text-decoration": "underline" }}>{pr.title || "Title unavailable"}</span>
+        <p class="oc-meta">Current branch and linked PRs for each thread · 60-second GitHub cache{lastRefresh() ? ` · ${lastRefresh()}` : ''}</p>
+        <Show when={!message()} fallback={<p class="oc-empty">{message()}</p>}>
+          <div class="oc-table-wrap"><table class="oc-table" style={{ "min-width": "915px", "table-layout": "fixed" }}>
+            <colgroup><col style={{ width: "200px" }} /><col style={{ width: "310px" }} /><col style={{ width: "145px" }} /><col style={{ width: "110px" }} /><col style={{ width: "150px" }} /></colgroup>
+            <thead><tr><For each={["Thread / branch", "Pull request", "Status", "Checks", "Findings"]}>{(label) => <th scope="col">{label}</th>}</For></tr></thead>
+            <tbody><For each={rows()}>{(row) => {
+              const pulls = () => visiblePulls(row.result?.prs || [], hideMerged())
+              return <Show when={pulls().length} fallback={<tr><SessionCell row={row} span={1} /><td colSpan={4} style={cell}><span style={{ opacity: 0.7 }}>{row.result?.prs?.length && hideMerged() ? "Merged PRs hidden" : row.result?.note || "Loading…"}</span></td></tr>}>
+              <For each={pulls()}>{(pr: any, index) => <tr>
+                <Show when={index() === 0}><SessionCell row={row} span={pulls().length} /></Show>
+                <td><button type="button" class="oc-link" title={`#${pr.number} ${pr.repo}: ${pr.title || "Title unavailable"}`} onClick={() => open(pr.url)}>
+                  <span class="oc-link-title" style={ellipsis}>{pr.title || "Title unavailable"}</span>
+                  <span class="oc-link-meta">{pr.repo.split("/").pop()} · #{pr.number}</span>
                 </button></td>
                 <For each={[pr.status, pr.ci]}>{(value) => <td style={{ ...cell, "white-space": "nowrap" }}><Status value={value} /></td>}</For>
-                <td style={{ ...cell, "white-space": "nowrap" }} title={pr.findings?.outdated ? "Findings are from an earlier commit" : pr.findings ? "Findings from the bot's latest review of this commit" : "No recent bot review marker available"}>{pr.findings ? `${pr.findings.count}${pr.findings.outdated ? " (old)" : ""}` : "—"}</td>
+                <td title={pr.findings?.outdated ? "Findings are from an earlier commit" : pr.findings ? "Findings from the bot's latest review of this commit" : "No recent bot review marker available"}><span class="oc-badge" data-tone={findingsStatus(pr.findings).tone}>{findingsStatus(pr.findings).label}</span></td>
               </tr>}</For>
-            </Show>}</For></tbody>
-          </table>
+            </Show>}}</For></tbody>
+          </table></div>
         </Show>
       </div>
     }

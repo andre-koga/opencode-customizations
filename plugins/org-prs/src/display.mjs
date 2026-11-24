@@ -1,3 +1,4 @@
+import { statusColor as sharedStatusColor } from '../../shared-ui/status.mjs'
 const columns = new Set(['pull', 'status', 'updated', 'comments'])
 
 /** Cycle one column through ascending, descending and the original order. */
@@ -27,8 +28,5 @@ export function sortPulls(pulls, sort) {
 
 /** Statuses keep their names as well as distinct, theme-appropriate colors. */
 export function statusColor(status, mode) {
-  const palette = mode === 'light'
-    ? { Open: '#176c36', Draft: '#59636e', Merged: '#6941a5', Closed: '#b42318' }
-    : { Open: '#75d991', Draft: '#bdc4ce', Merged: '#c69cf2', Closed: '#ff8585' }
-  return palette[status] || 'inherit'
+  return sharedStatusColor(status, mode)
 }

@@ -3,12 +3,15 @@ import { Command, Contract, LinkHandler, Panel, Plugin, Style } from '@opencode/
 import { buildPlan, isPlanPath, openTaskPullRequest, stagePlanQuestion } from './plan.mjs'
 import { parsePlan, planProgress, TASK_STATUSES } from './plan-format.mjs'
 import css from './panel.css?inline'
+import theme from '../../shared-ui/theme.css?inline'
+import { statusLabel, statusTone } from '../../shared-ui/status.mjs'
 
 const NativePR = Contract.define('native-pr.open')
 
 export default Plugin.define({
   setup(ctx) {
     const nativePR = ctx.use(NativePR)
+    ctx.add(Style, theme)
     ctx.add(Style, css)
     const tabs = new Map<string, any>()
     const parse = (id: string) => {
@@ -113,7 +116,7 @@ export default Plugin.define({
         if (!current || !active() || !valid() || text() === undefined || busy()) return
         const call = generation
         setBusy(true); setError('')
-        try { await buildPlan(session, props.screen.file.root, current, text()); if (!disposed && call === generation) setNotice('Build requested in this chat.') }
+        try { await buildPlan(session, props.screen.file.root, current, text()); if (!disposed && call === generation) setNotice('Build requested in this thread.') }
         catch (err) { if (!disposed && call === generation) setError(err instanceof Error ? err.message : String(err)) }
         finally { if (!disposed && call === generation) setBusy(false) }
       }
@@ -135,7 +138,7 @@ export default Plugin.define({
         // Modified clicks retain normal browser link behavior.
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
         event.preventDefault(); event.stopPropagation()
-        if (!active()) { setError('Switch to this plan’s chat before opening its pull request.'); return }
+        if (!active()) { setError('Switch to this plan’s thread before opening its pull request.'); return }
         try { openTaskPullRequest(nativePR, props.session(), href, (url: string) => ctx.system.openExternal(url)) }
         catch (err) { setError(err instanceof Error ? err.message : String(err)) }
       }
@@ -144,17 +147,17 @@ export default Plugin.define({
           <h2>Checklist</h2>
           <label>Show <select aria-label="Filter tasks by status" value={filter()} onChange={(event) => setFilter(event.currentTarget.value)}>
             <option value="all">All tasks ({plan().tasks.length})</option>
-            <For each={TASK_STATUSES}>{(status) => <option value={status}>{status} ({progress().counts[status]})</option>}</For>
+            <For each={TASK_STATUSES}>{(status) => <option value={status}>{statusLabel(status)} ({progress().counts[status]})</option>}</For>
           </select></label>
         </div>
         <Show when={visibleTasks().length} fallback={<p class="plan-muted">No tasks match this filter.</p>}>
           <For each={groups()}>{(group) => <section aria-label={String(group)}>
             <h3>{group}</h3>
-            <For each={visibleTasks().filter((task: any) => task.group === group)}>{(task: any) => <article class="plan-task" data-status={task.status}>
+            <For each={visibleTasks().filter((task: any) => task.group === group)}>{(task: any) => <article class="plan-task" data-status={task.status} data-tone={statusTone(task.status)}>
               <div class="plan-task-heading">
-                <span class="plan-task-state" aria-label={`Status: ${task.status}`}>{task.status === 'done' ? '✓' : task.status === 'blocked' ? '!' : task.status === 'in-progress' ? '◐' : ['cancelled', 'superseded'].includes(task.status) ? '–' : '○'}</span>
+                <span class="plan-task-state" aria-label={`Status: ${statusLabel(task.status)}`}>{task.status === 'done' ? '✓' : task.status === 'blocked' ? '!' : task.status === 'in-progress' ? '◐' : ['cancelled', 'superseded'].includes(task.status) ? '–' : '○'}</span>
                 <strong><span class="plan-muted">{task.id}</span> {task.title}</strong>
-                <span class="plan-status">{task.status}</span>
+                <span class="oc-badge">{statusLabel(task.status)}</span>
               </div>
               <div class="plan-task-details">
                 <Show when={task.fields['Depends on'] && task.fields['Depends on'] !== 'none'}><p><strong>Depends on:</strong> {task.fields['Depends on']}</p></Show>
@@ -172,22 +175,22 @@ export default Plugin.define({
           </section>}</For>
         </Show>
       </div>
-      return <div class="plan-renderer">
+      return <div class="oc-panel plan-renderer" data-theme={ctx.appearance.mode()}>
         <header class="plan-header">
           <div class="plan-toolbar">
-            <div><strong>{plan().title}</strong><div class="plan-muted">{plan().standard ? `Revision ${plan().metadata.revision || '?'} · ${plan().metadata.status || 'unknown'} · ` : 'Nonstandard plan · '}{progress().done} of {progress().total} active tasks done<Show when={progress().retired}> · {progress().retired} retired</Show></div></div>
-            <ctx.ui.Button type="button" variant="contrast" size="large" disabled={busy() || text() === undefined || !active() || !valid()} busy={busy()} onClick={() => void start()}>{busy() ? 'Starting…' : 'Build'}</ctx.ui.Button>
+            <div><h2 class="oc-title">{plan().title}</h2><div class="plan-muted">{plan().standard ? `Revision ${plan().metadata.revision || '?'} · ${statusLabel(plan().metadata.status || 'unknown')} · ` : 'Nonstandard plan · '}{progress().done} of {progress().total} active tasks completed<Show when={progress().retired}> · {progress().retired} retired</Show></div></div>
+            <button type="button" class="oc-button oc-button-primary" disabled={busy() || text() === undefined || !active() || !valid()} onClick={() => void start()}>{busy() ? 'Starting…' : 'Build plan'}</button>
           </div>
           <progress aria-label="Active task completion" max={Math.max(1, progress().total)} value={progress().done} />
-          <div class="plan-tabs" role="tablist" aria-label="Plan sections" onKeyDown={navigateKey}>
-            <For each={navigation()}>{(item: any) => <button type="button" role="tab" id={`${panelId}-${item.id}`} aria-controls={panelId} aria-selected={view() === item.id} tabIndex={view() === item.id ? 0 : -1} onClick={() => setView(item.id)}>{item.title}</button>}</For>
+          <div class="plan-tabs oc-tabs" role="tablist" aria-label="Plan sections" onKeyDown={navigateKey}>
+            <For each={navigation()}>{(item: any) => <button type="button" class="oc-tab" role="tab" id={`${panelId}-${item.id}`} aria-controls={panelId} aria-selected={view() === item.id} tabIndex={view() === item.id ? 0 : -1} onClick={() => setView(item.id)}>{item.title}</button>}</For>
           </div>
         </header>
         <div class="plan-body" role="tabpanel" id={panelId} aria-labelledby={`${panelId}-${view()}`}>
-        <Show when={error()}><p role="alert" class="plan-error">{error()}</p></Show>
-        <Show when={notice()}><p role="status" class="plan-muted">{notice()}</p></Show>
+        <Show when={error()}><p role="alert" class="oc-alert" data-tone="critical">{error()}</p></Show>
+        <Show when={notice()}><p role="status" class="oc-alert" data-tone="info">{notice()}</p></Show>
         <Show when={text() !== undefined} fallback={<p>{file()?.error || (file()?.notFound ? 'Plan not found.' : 'Loading plan…')}</p>}>
-          <Show when={!valid()}><div class="plan-warning" role="status">
+          <Show when={!valid()}><div class="plan-warning oc-alert" data-tone="warning" role="status">
             <strong>{plan().standard ? 'Plan format needs attention' : 'This plan predates the standard format'}</strong>
             <p>Source is preserved. Build is disabled until the plan is normalized and validated.</p>
             <Show when={diagnostics().length}><ul><For each={diagnostics()}>{(item: any) => <li>{item.line ? `Line ${item.line}: ` : ''}{item.message}</li>}</For></ul></Show>

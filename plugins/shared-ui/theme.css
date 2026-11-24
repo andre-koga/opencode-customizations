@@ -1,0 +1,49 @@
+.oc-panel {
+  --oc-success: #78dba1; --oc-completed: #c5a5f5; --oc-warning: #e8bd70; --oc-critical: #ff9696; --oc-info: #9abfff; --oc-weak: #b0b8c4;
+  --oc-bg: var(--background-base, #141414); --oc-surface: color-mix(in srgb, currentColor 3%, var(--oc-bg));
+  --oc-border: color-mix(in srgb, currentColor 14%, transparent); --oc-hover: color-mix(in srgb, currentColor 6%, transparent);
+  height: 100%; overflow: auto; padding: 20px; font-size: 13px; line-height: 1.55; color: inherit; color-scheme: dark;
+}
+.oc-panel[data-theme=light] { --oc-success: #176b3a; --oc-completed: #7040ad; --oc-warning: #805700; --oc-critical: #b42332; --oc-info: #245da8; --oc-weak: #586474; --oc-bg: var(--background-base, #fff); color-scheme: light; }
+.oc-panel *, .oc-panel *::before, .oc-panel *::after { box-sizing: border-box; }
+.oc-panel .oc-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.oc-panel .oc-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.oc-panel .oc-title { font-size: 17px; line-height: 1.4; font-weight: 650; margin: 0; letter-spacing: -.02em; }
+.oc-panel .oc-meta { color: var(--oc-weak); font-size: 12px; margin: 8px 0 14px; }
+.oc-panel .oc-muted { color: var(--oc-weak); }
+.oc-panel .oc-button, .oc-panel .oc-tab, .oc-panel .oc-input {
+  font: inherit; color: inherit; background: var(--oc-surface); border: 1px solid var(--oc-border); border-radius: 7px; padding: 6px 11px; line-height: 1.5;
+}
+.oc-panel .oc-button, .oc-panel .oc-tab { cursor: pointer; font-weight: 550; white-space: nowrap; flex-shrink: 0; }
+.oc-panel .oc-button:not(:disabled):hover, .oc-panel .oc-tab:hover { background: var(--oc-hover); }
+.oc-panel button:disabled { cursor: default; opacity: .5; }
+.oc-panel button:focus-visible, .oc-panel a:focus-visible, .oc-panel select:focus-visible, .oc-panel input:focus-visible { outline: 2px solid var(--oc-info); outline-offset: 2px; }
+.oc-panel .oc-button-primary { color: white; background: #245da8; border-color: #245da8; }
+.oc-panel .oc-button-primary:not(:disabled):hover { background: #1d4e91; }
+.oc-panel .oc-tabs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; padding: 5px 0 10px; margin: 15px 0 14px; border-bottom: 1px solid var(--oc-border); }
+.oc-panel .oc-tab { background: transparent; border-color: transparent; }
+.oc-panel .oc-tab[aria-pressed=true], .oc-panel .oc-tab[aria-selected=true] { color: var(--oc-info); background: color-mix(in srgb, var(--oc-info) 10%, transparent); border-color: color-mix(in srgb, var(--oc-info) 24%, transparent); }
+.oc-panel .oc-badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 600; line-height: 1.6; white-space: nowrap; color: var(--oc-tone, var(--oc-weak)); background: color-mix(in srgb, var(--oc-tone, var(--oc-weak)) 10%, transparent); border: 1px solid color-mix(in srgb, var(--oc-tone, var(--oc-weak)) 18%, transparent); }
+.oc-panel .oc-badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex: none; }
+.oc-panel [data-tone=success] { --oc-tone: var(--oc-success); }
+.oc-panel [data-tone=completed] { --oc-tone: var(--oc-completed); }
+.oc-panel [data-tone=warning] { --oc-tone: var(--oc-warning); }
+.oc-panel [data-tone=critical] { --oc-tone: var(--oc-critical); }
+.oc-panel [data-tone=info] { --oc-tone: var(--oc-info); }
+.oc-panel [data-tone=weak] { --oc-tone: var(--oc-weak); }
+.oc-panel .oc-alert { color: var(--oc-tone, var(--oc-info)); background: color-mix(in srgb, var(--oc-tone, var(--oc-info)) 7%, transparent); border: 1px solid color-mix(in srgb, var(--oc-tone, var(--oc-info)) 22%, transparent); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; }
+.oc-panel .oc-empty { color: var(--oc-weak); padding: 24px 12px; text-align: center; border: 1px dashed var(--oc-border); border-radius: 8px; }
+.oc-panel .oc-table-wrap { overflow-x: auto; border: 1px solid var(--oc-border); border-radius: 9px; }
+.oc-panel .oc-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+.oc-panel .oc-table th { color: var(--oc-weak); font-size: 11px; font-weight: 600; background: var(--oc-surface); padding: 10px 12px; white-space: nowrap; }
+.oc-panel .oc-table td { padding: 11px 12px; vertical-align: top; border-top: 1px solid var(--oc-border); }
+.oc-panel .oc-table tbody tr:hover { background: var(--oc-hover); }
+.oc-panel .oc-sort, .oc-panel .oc-link { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+.oc-panel .oc-sort { display: inline-flex; gap: 6px; align-items: center; font-weight: inherit; }
+.oc-panel .oc-link { display: block; width: 100%; line-height: 1.5; }
+.oc-panel .oc-link:hover { color: var(--oc-info); }
+.oc-panel .oc-link-title { display: block; font-weight: 550; overflow-wrap: anywhere; }
+.oc-panel .oc-link-meta { display: block; color: var(--oc-weak); font-size: 11px; margin-top: 2px; }
+.oc-panel .oc-card { border: 1px solid var(--oc-border); border-radius: 9px; background: var(--oc-surface); padding: 14px; margin-bottom: 10px; }
+.oc-panel .oc-status { display: inline-flex; gap: 8px; align-items: center; padding: 6px 10px; color: var(--oc-tone, var(--oc-weak)); background: color-mix(in srgb, var(--oc-tone, var(--oc-weak)) 9%, transparent); border: 1px solid color-mix(in srgb, var(--oc-tone, var(--oc-weak)) 22%, transparent); border-radius: 7px; font-weight: 600; }
+@media (max-width: 480px) { .oc-panel { padding: 12px; } .oc-panel .oc-toolbar { align-items: flex-start; } }

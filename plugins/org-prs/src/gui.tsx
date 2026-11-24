@@ -1,10 +1,12 @@
 import { Schema } from 'effect'
 import { createEffect, createSignal, For, Show } from 'solid-js'
-import { Command, Contract, Ipc, MenuItem, Panel, Plugin } from '@opencode/plugin/gui'
+import { Command, Contract, Ipc, MenuItem, Panel, Plugin, Style } from '@opencode/plugin/gui'
 import { Browser } from '@opencode/plugin/gui/browser'
 import { makeReader } from './github.mjs'
 import { openPullRequest } from './navigation.mjs'
-import { nextSort, sortPulls, statusColor } from './display.mjs'
+import { nextSort, sortPulls } from './display.mjs'
+import { statusTone } from '../../shared-ui/status.mjs'
+import theme from '../../shared-ui/theme.css?inline'
 
 const NativePR = Contract.define('native-pr.open')
 const Backend = Ipc.define({
@@ -14,6 +16,7 @@ const Backend = Ipc.define({
 
 export default Plugin.define({
   setup(ctx) {
+    ctx.add(Style, theme)
     const backend = ctx.main(Backend)
     const nativePR = ctx.use(NativePR)
     const browser = ctx.use(Browser)
@@ -71,40 +74,40 @@ export default Plugin.define({
       function open(url: string) {
         openPullRequest({ session: props.session(), url, native: nativePR(), browser: browser(), external: (target: string) => ctx.system.openExternal(target) })
       }
-      const cell = { padding: '9px 8px', 'border-bottom': '1px solid #8883', 'vertical-align': 'top' }
+      const cell = {}
       const date = (value: string) => { const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleDateString() }
-      return <div style={{ height: '100%', overflow: 'auto', padding: '18px', 'font-size': '13px' }}>
-        <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', gap: '12px', 'flex-wrap': 'wrap' }}>
-          <div><strong style={{ 'font-size': '16px' }}>My organization PRs</strong><div style={{ opacity: 0.7, 'margin-top': '4px' }}>{organization || 'Organization not configured'}{rows()?.login ? ` · @${rows().login}` : ''}</div></div>
-          <div style={{ display: 'flex', gap: '6px' }}>
-            <ctx.ui.Button variant={scope() === 'open' ? 'contrast' : 'neutral'} onClick={() => choose('open')}>Open</ctx.ui.Button>
-            <ctx.ui.Button variant={scope() === 'all' ? 'contrast' : 'neutral'} onClick={() => choose('all')}>All</ctx.ui.Button>
-            <ctx.ui.Button disabled={busy()} onClick={() => void load(scope())}>{busy() ? 'Loading…' : 'Refresh'}</ctx.ui.Button>
+      return <div class="oc-panel" data-theme={ctx.appearance.mode()}>
+        <div class="oc-toolbar">
+          <div><h2 class="oc-title">My organization PRs</h2><div class="oc-meta" style={{ margin: '4px 0 0' }}>{organization || 'Organization not configured'}{rows()?.login ? ` · @${rows().login}` : ''}</div></div>
+          <div class="oc-actions">
+            <button type="button" class="oc-tab" aria-pressed={scope() === 'open'} onClick={() => choose('open')}>Open</button>
+            <button type="button" class="oc-tab" aria-pressed={scope() === 'all'} onClick={() => choose('all')}>All</button>
+            <button type="button" class="oc-button" disabled={busy()} onClick={() => void load(scope())}>{busy() ? 'Loading…' : 'Refresh'}</button>
           </div>
         </div>
-        <p style={{ opacity: 0.7, 'font-size': '12px', 'margin': '12px 0' }}>{stamp()}{stamp() ? ' · ' : ''}Authored by your GitHub account · refresh is cached for 60 seconds</p>
-        <Show when={error()}><p role="alert" style={{ color: '#e27777' }}>{error()}</p></Show>
+        <p class="oc-meta">{stamp()}{stamp() ? ' · ' : ''}Authored by your GitHub account · 60-second GitHub cache</p>
+        <Show when={error()}><p role="alert" class="oc-alert" data-tone="critical">{error()}</p></Show>
         <Show when={!rows() && busy()}><p>Loading pull requests…</p></Show>
         <Show when={rows()}>{(data) => <>
-          <Show when={data().limited || data().incomplete}><p role="status" style={{ color: '#c8952c' }}>GitHub returned incomplete results{data().limited ? ' (search is limited to 1,000 PRs)' : ''}.</p></Show>
-          <p style={{ opacity: 0.7 }}>{data().pulls.length} shown{data().total !== data().pulls.length ? ` of ${data().total} results` : ''}</p>
-          <Show when={data().pulls.length} fallback={<p>No {scope() === 'open' ? 'open ' : ''}PRs found.</p>}>
-            <table style={{ width: '100%', 'min-width': '620px', 'border-collapse': 'collapse', 'text-align': 'left' }}>
+          <Show when={data().limited || data().incomplete}><p role="status" class="oc-alert" data-tone="warning">GitHub returned incomplete results{data().limited ? ' (search is limited to 1,000 PRs)' : ''}.</p></Show>
+          <p class="oc-meta">{data().pulls.length} shown{data().total !== data().pulls.length ? ` of ${data().total} results` : ''}</p>
+          <Show when={data().pulls.length} fallback={<p class="oc-empty">No {scope() === 'open' ? 'open ' : ''}PRs found.</p>}>
+            <div class="oc-table-wrap"><table class="oc-table" style={{ 'min-width': '620px' }}>
               <thead><tr><For each={[
                 { key: 'pull', label: 'Pull request', detail: 'Sort by PR number' },
                 { key: 'status', label: 'Status', detail: 'Sort by status' },
                 { key: 'updated', label: 'Updated', detail: 'Sort by last update' },
-                { key: 'comments', label: 'Comments', detail: 'Sort by issue discussion comments' },
-              ]}>{(column) => <th scope="col" aria-sort={sort()?.key === column.key ? (sort()?.direction === 'asc' ? 'ascending' : 'descending') : 'none'} style={{ ...cell, opacity: 0.75, 'white-space': 'nowrap' }}>
-                <button type="button" title={`${column.detail}; click to cycle ascending, descending, and original order`} onClick={() => setSort(nextSort(sort(), column.key))} style={{ cursor: 'pointer', 'font-weight': 'inherit', color: 'inherit', 'text-align': 'left' }}>{column.label} <span aria-hidden="true">{sort()?.key === column.key ? (sort()?.direction === 'asc' ? '↑' : '↓') : '↕'}</span></button>
+                { key: 'comments', label: 'Discussion', detail: 'Sort by issue discussion comments' },
+              ]}>{(column) => <th scope="col" aria-sort={sort()?.key === column.key ? (sort()?.direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                <button type="button" class="oc-sort" title={`${column.detail}; click to cycle ascending, descending, and original order`} onClick={() => setSort(nextSort(sort(), column.key))}>{column.label} <span aria-hidden="true">{sort()?.key === column.key ? (sort()?.direction === 'asc' ? '↑' : '↓') : '↕'}</span></button>
               </th>}</For></tr></thead>
               <tbody><For each={sortPulls(data().pulls, sort())}>{(pr: any) => <tr>
-                <td style={cell}><button type="button" onClick={() => open(pr.url)} title={`${pr.repo} #${pr.number}: ${pr.title}`} style={{ cursor: 'pointer', 'text-align': 'left' }}><strong>#{pr.number}</strong> <small style={{ opacity: 0.65 }}>{pr.repo}</small> <span style={{ 'text-decoration': 'underline' }}>{pr.title || 'Title unavailable'}</span></button></td>
-                <td style={{ ...cell, 'white-space': 'nowrap' }}><span style={{ color: statusColor(pr.status, ctx.appearance.mode()), 'font-weight': 600 }}>{pr.status}</span></td>
+                <td><button type="button" class="oc-link" onClick={() => open(pr.url)} title={`${pr.repo} #${pr.number}: ${pr.title}`}><span class="oc-link-title">{pr.title || 'Title unavailable'}</span><span class="oc-link-meta">{pr.repo} · #{pr.number}</span></button></td>
+                <td style={{ 'white-space': 'nowrap' }}><span class="oc-badge" data-tone={statusTone(pr.status)}>{pr.status}</span></td>
                 <td style={{ ...cell, 'white-space': 'nowrap' }} title={pr.updatedAt}>{date(pr.updatedAt)}</td>
                 <td style={cell} title="Issue discussion comments only">{pr.comments ?? '—'}</td>
               </tr>}</For></tbody>
-            </table>
+            </table></div>
           </Show>
         </>}</Show>
       </div>

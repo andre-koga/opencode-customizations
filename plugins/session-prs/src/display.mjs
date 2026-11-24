@@ -1,8 +1,7 @@
-export function statusColor(value) {
-  if (["Passed", "Approved", "Merged", "Ready"].includes(value)) return "var(--text-success, #16834a)"
-  if (["Failed", "Changes requested", "Not ready", "Unavailable"].includes(value)) return "var(--text-critical, #dc2626)"
-  if (["Conflicts", "Running"].includes(value)) return "var(--text-warning, #b77900)"
-  return "var(--text-weak, #888)"
+export { statusColor } from '../../shared-ui/status.mjs'
+
+export function visiblePulls(pulls, hideMerged) {
+  return hideMerged ? pulls.filter((pr) => pr.status !== "Merged") : pulls
 }
 
 export function combinePulls(branchPull, referenced) {

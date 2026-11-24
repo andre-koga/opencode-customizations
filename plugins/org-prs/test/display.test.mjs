@@ -33,7 +33,7 @@ test('sorts each column without mutating source, and keeps ties stable', () => {
   assert.deepEqual(pulls.map((pr) => pr.number), [20, 3, 11, 5])
 })
 
-test('gives statuses distinct readable colors for both themes', () => {
+test('gives lifecycle statuses readable shared colors for both themes', () => {
   const luminance = (hex) => {
     const parts = hex.match(/[0-9a-f]{2}/gi).map((x) => parseInt(x, 16) / 255)
     const [r, g, b] = parts.map((v) => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
@@ -41,12 +41,13 @@ test('gives statuses distinct readable colors for both themes', () => {
   }
   for (const mode of ['light', 'dark']) {
     const colors = ['Open', 'Draft', 'Merged', 'Closed'].map((status) => statusColor(status, mode))
-    assert.equal(new Set(colors).size, 4)
+    assert.equal(new Set(colors).size, 3) // Closed and Draft are both inactive, not failures.
     for (const color of colors) {
       const lum = luminance(color)
       const contrast = mode === 'light' ? 1.05 / (lum + 0.05) : (lum + 0.05) / (luminance('#141414') + 0.05)
       assert.ok(contrast >= 4.5, `${mode} ${color} contrast ${contrast}`)
     }
   }
-  assert.equal(statusColor('Unknown', 'dark'), 'inherit')
+  assert.equal(statusColor('Unknown', 'dark'), statusColor('Draft', 'dark'))
+  assert.notEqual(statusColor('Merged', 'dark'), statusColor('Ready', 'dark'))
 })
